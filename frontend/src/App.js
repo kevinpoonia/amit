@@ -91,7 +91,8 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await axios.post('/api/login', loginFormData);
+      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/login`, loginFormData);
+
       
       setToken(response.data.token);
       setUser(response.data.user);
