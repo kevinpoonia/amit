@@ -5,7 +5,7 @@ import axios from 'axios';
 const getApiBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
     // In production, use the Render backend URL
-    return 'https://my-fullstack-app-backend-2omq.onrender.com';
+    return 'https://investmentpro-nu7s.onrender.com';
   } else {
     // In development, use the proxy
     return '';
