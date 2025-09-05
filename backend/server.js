@@ -20,6 +20,16 @@ console.log(`SUPABASE_URL: ${process.env.SUPABASE_URL ? 'SET' : 'NOT SET'}`);
 console.log(`SUPABASE_API_KEY: ${process.env.SUPABASE_API_KEY ? 'SET' : 'NOT SET'}`);
 console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? 'SET' : 'NOT SET'}`);
 
+// Add CORS middleware here to allow frontend domain access
+app.use(cors({
+  origin: 'https://investmentproplus.netlify.app', // <-- Replace with your Netlify frontend URL
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+app.options('*', cors());
+
+
 // Middleware
 app.use(cors());
 app.use(express.json());
