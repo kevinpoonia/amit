@@ -8,14 +8,11 @@ import Referral from './components/Referral';
 import AdminPanel from './components/AdminPanel';
 
 function App() {
-  // Removed real login states for bypass
+  // Removed unused error, success, loading states to fix ESLint
   const [, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [view, setView] = useState('login'); // fallback view if bypass disabled
+  const [view, setView] = useState('login'); // used for navigation view
   const [userData, setUserData] = useState(null);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [loading, setLoading] = useState(false);
 
   // Temporary login bypass: auto-login with dummy user and token
   useEffect(() => {
@@ -34,7 +31,7 @@ function App() {
   }, []);
 
   const handleLogout = () => {
-    // To logout properly, you may want to disable bypass here if needed
+    // Disable bypass to logout correctly if needed
     setToken(null);
     setUser(null);
     setUserData(null);
@@ -43,8 +40,6 @@ function App() {
 
   const handleViewChange = (newView) => {
     setView(newView);
-    setError('');
-    setSuccess('');
   };
 
   const renderDashboard = () => (
@@ -110,7 +105,7 @@ function App() {
           {view === 'admin' && renderAdminPanel()}
         </>
       ) : (
-        // If bypass logout is triggered, show login/register views
+        // If bypass logout is triggered, show fallback view
         <div>
           <h2>Login Bypass Disabled - Please login normally</h2>
         </div>
