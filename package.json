@@ -1,0 +1,33 @@
+{
+  "name": "investment-platform",
+  "version": "1.0.0",
+  "description": "A full-stack investment platform with user authentication, product plans, daily income, withdrawals, and recharges.",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "sh deploy.sh",
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adittaya/my-fullstack-app.git"
+  },
+  "keywords": [
+    "investment",
+    "platform",
+    "react",
+    "node",
+    "express",
+    "supabase"
+  ],
+  "author": "Aditya Halder",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/adittaya/my-fullstack-app/issues"
+  },
+  "homepage": "https://github.com/adittaya/my-fullstack-app#readme",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.55.0",
+    "dotenv": "^17.2.1"
+  }
+}

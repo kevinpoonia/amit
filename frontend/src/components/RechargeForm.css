@@ -1,0 +1,342 @@
+/* Premium Recharge Form Styles */
+
+.recharge-container {
+  padding: 16px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.recharge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.recharge-header h1 {
+  margin: 0;
+  font-size: 24px;
+  background: linear-gradient(to right, var(--gold-primary), var(--royal-blue-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+}
+
+.recharge-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-glass);
+  margin-bottom: 24px;
+}
+
+.recharge-card h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: center;
+}
+
+.recharge-steps {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 30px;
+  position: relative;
+}
+
+.recharge-steps::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 1;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  z-index: 2;
+}
+
+.step-circle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.step.active .step-circle {
+  background: linear-gradient(135deg, var(--gold-primary), var(--gold-secondary));
+  color: var(--luxury-dark);
+}
+
+.step.completed .step-circle {
+  background: var(--success);
+  color: white;
+}
+
+.step-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.step.active .step-label {
+  color: var(--gold-primary);
+  font-weight: 500;
+}
+
+/* Numeric Keypad */
+.keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.keypad-button {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 500;
+  padding: 20px 0;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.keypad-button:hover {
+  background: rgba(40, 40, 60, 0.7);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  transform: translateY(-2px);
+}
+
+.keypad-button:active {
+  transform: translateY(1px);
+}
+
+.keypad-button.zero {
+  grid-column: span 2;
+}
+
+.keypad-button.action {
+  background: rgba(65, 105, 225, 0.1);
+  color: var(--royal-blue-light);
+}
+
+.keypad-button.action:hover {
+  background: rgba(65, 105, 225, 0.2);
+}
+
+/* Amount Display */
+.amount-display {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 24px;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-primary);
+  position: relative;
+}
+
+.amount-display::before {
+  content: '₹';
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  font-size: 24px;
+}
+
+/* QR Code Section */
+.qr-section {
+  text-align: center;
+  margin: 30px 0;
+}
+
+.qr-code-container {
+  background: white;
+  padding: 20px;
+  border-radius: var(--radius-md);
+  display: inline-block;
+  margin: 20px 0;
+}
+
+.qr-instructions {
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 16px 0;
+}
+
+.upi-id-display {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  font-family: monospace;
+  font-size: 18px;
+  color: var(--text-primary);
+  word-break: break-all;
+  margin: 16px 0;
+  position: relative;
+}
+
+.copy-button {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 215, 0, 0.1);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  border-radius: var(--radius-md);
+  color: var(--gold-primary);
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.copy-button:hover {
+  background: rgba(255, 215, 0, 0.2);
+}
+
+/* UTR Input */
+.utr-input-container {
+  margin: 24px 0;
+}
+
+.utr-input {
+  width: 100%;
+  padding: 16px;
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 18px;
+  text-align: center;
+  letter-spacing: 2px;
+}
+
+.utr-input:focus {
+  outline: none;
+  border-color: var(--royal-blue);
+  box-shadow: 0 0 0 2px rgba(65, 105, 225, 0.3);
+}
+
+/* Form Buttons */
+.form-buttons {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.form-buttons .gradient-button {
+  flex: 1;
+  padding: 16px;
+}
+
+.form-buttons .secondary-button {
+  flex: 1;
+  padding: 16px;
+}
+
+/* Recharge History */
+.history-section {
+  margin-top: 30px;
+}
+
+.history-section h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.history-item {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.history-item-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.history-item-status.pending {
+  background: rgba(255, 171, 0, 0.1);
+  color: var(--warning);
+}
+
+.history-item-status.approved {
+  background: rgba(0, 200, 83, 0.1);
+  color: var(--success);
+}
+
+.history-item-status.rejected {
+  background: rgba(255, 23, 68, 0.1);
+  color: var(--error);
+}
+
+.history-item-details {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .recharge-container {
+    padding: 12px;
+  }
+  
+  .recharge-card {
+    padding: 20px;
+  }
+  
+  .keypad-grid {
+    gap: 8px;
+  }
+  
+  .keypad-button {
+    padding: 16px 0;
+    font-size: 20px;
+  }
+  
+  .amount-display {
+    font-size: 28px;
+    padding: 16px;
+  }
+  
+  .form-buttons {
+    flex-direction: column;
+  }
+}

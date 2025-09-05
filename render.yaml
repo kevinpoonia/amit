@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: my-fullstack-app-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    rootDir: backend
+    envVars:
+      - key: SUPABASE_URL
+        value: https://iymiuluenjkpiwggjmcm.supabase.co
+      - key: SUPABASE_API_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml5bWl1bHVlbmprcGl3Z2dqbWNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUyODk0NTAsImV4cCI6MjA3MDg2NTQ1MH0.HmJy3qSk-d0v1willk0Qv0wXWoKVcE7OZtw6QY13VV4
+      - key: JWT_SECRET
+        value: bc1fa2cb6512e830bf23040c0905355450bcd22235ea1ba59bb26d27fcdb721aaad1f65d42296c1694d2d5374c460777e71915cf9c25de23f61e97657d07744a
+      - key: PORT
+        value: 5000

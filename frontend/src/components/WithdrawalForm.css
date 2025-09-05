@@ -1,0 +1,244 @@
+/* Premium Withdrawal Form Styles */
+
+.withdrawal-container {
+  padding: 16px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.withdrawal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.withdrawal-header h1 {
+  margin: 0;
+  font-size: 24px;
+  background: linear-gradient(to right, var(--gold-primary), var(--royal-blue-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+}
+
+.withdrawal-card {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-glass);
+  margin-bottom: 24px;
+}
+
+.withdrawal-card h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Method Selection */
+.method-selection {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.method-button {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: center;
+}
+
+.method-button:hover {
+  background: rgba(40, 40, 60, 0.7);
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  transform: translateY(-2px);
+}
+
+.method-button.selected {
+  background: linear-gradient(135deg, rgba(65, 105, 225, 0.2), rgba(106, 141, 255, 0.2));
+  border: 1px solid var(--royal-blue);
+}
+
+.method-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.method-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* Form Fields */
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.form-input {
+  width: 100%;
+  padding: 16px;
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 16px;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--royal-blue);
+  box-shadow: 0 0 0 2px rgba(65, 105, 225, 0.3);
+}
+
+/* Amount Section */
+.amount-section {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  margin: 24px 0;
+}
+
+.amount-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.amount-label {
+  color: var(--text-secondary);
+}
+
+.amount-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.amount-total {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.amount-total .amount-value {
+  font-size: 20px;
+  font-weight: 700;
+  background: linear-gradient(to right, var(--gold-primary), var(--gold-secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Form Buttons */
+.form-buttons {
+  display: flex;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.form-buttons .gradient-button {
+  flex: 1;
+  padding: 16px;
+}
+
+.form-buttons .secondary-button {
+  flex: 1;
+  padding: 16px;
+}
+
+/* Withdrawal History */
+.history-section {
+  margin-top: 30px;
+}
+
+.history-section h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.history-item {
+  background: rgba(30, 30, 50, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.history-item-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.history-item-status {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+
+.history-item-status.pending {
+  background: rgba(255, 171, 0, 0.1);
+  color: var(--warning);
+}
+
+.history-item-status.approved {
+  background: rgba(0, 200, 83, 0.1);
+  color: var(--success);
+}
+
+.history-item-status.rejected {
+  background: rgba(255, 23, 68, 0.1);
+  color: var(--error);
+}
+
+.history-item-details {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.history-item-amount {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .withdrawal-container {
+    padding: 12px;
+  }
+  
+  .withdrawal-card {
+    padding: 20px;
+  }
+  
+  .method-selection {
+    grid-template-columns: 1fr;
+  }
+  
+  .form-buttons {
+    flex-direction: column;
+  }
+}
