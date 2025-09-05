@@ -8,7 +8,6 @@ import RechargeForm from './components/RechargeForm';
 import Referral from './components/Referral';
 import AdminPanel from './components/AdminPanel';
 
-
 function App() {
   const [, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -29,6 +28,7 @@ function App() {
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const API_BASE_URL = process.env.REACT_APP_API_URL;
 
   // Check if user is already logged in
   useEffect(() => {
@@ -43,14 +43,12 @@ function App() {
     }
   }, []);
 
-
   const handleLoginInputChange = (e) => {
     setLoginFormData({
       ...loginFormData,
       [e.target.name]: e.target.value
     });
   };
-
 
   const handleRegisterInputChange = (e) => {
     setRegisterFormData({
@@ -59,7 +57,6 @@ function App() {
     });
   };
 
-
   const handleRegister = async (e) => {
     e.preventDefault();
     setError('');
@@ -67,8 +64,7 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/register`, registerFormData);
-
+      const response = await axios.post(`${API_BASE_URL}/api/register`, registerFormData);
       setToken(response.data.token);
       setUser(response.data.user);
       localStorage.setItem('token', response.data.token);
@@ -83,7 +79,6 @@ function App() {
     }
   };
 
-
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
@@ -91,8 +86,7 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await axios.post(`${process.env.REACT_APP_API_URL}/api/login`, loginFormData);
-
+      const response = await axios.post(`${API_BASE_URL}/api/login`, loginFormData);
       
       setToken(response.data.token);
       setUser(response.data.user);
@@ -108,10 +102,9 @@ function App() {
     }
   };
 
-
   const fetchUserData = async (authToken) => {
     try {
-      const response = await axios.get('/api/data', {
+      const response = await axios.get(`${API_BASE_URL}/api/data`, {
         headers: {
           Authorization: `Bearer ${authToken}`
         }
@@ -121,7 +114,6 @@ function App() {
       setError(err.response?.data?.error || 'Failed to fetch user data');
     }
   };
-
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -143,17 +135,13 @@ function App() {
     });
   };
 
-
   const handleViewChange = (newView) => {
     setView(newView);
-    // Clear any previous error/success messages when switching views
     setError('');
     setSuccess('');
   };
 
-
   const handlePlanPurchase = (newBalance) => {
-    // Update user balance after plan purchase
     if (userData) {
       setUserData({
         ...userData,
@@ -163,9 +151,7 @@ function App() {
     setSuccess('Plan purchased successfully!');
   };
 
-
   const handleWithdrawalRequest = (newBalance) => {
-    // Update user balance after withdrawal request
     if (userData) {
       setUserData({
         ...userData,
@@ -175,11 +161,9 @@ function App() {
     setSuccess('Withdrawal request submitted successfully!');
   };
 
-
   const handleRechargeRequest = () => {
     setSuccess('Recharge request submitted successfully! Waiting for admin approval.');
   };
-
 
   const renderLoginForm = () => (
     <div className="auth-page">
@@ -225,7 +209,6 @@ function App() {
       </div>
     </div>
   );
-
 
   const renderRegisterForm = () => (
     <div className="auth-page">
@@ -301,7 +284,6 @@ function App() {
     </div>
   );
 
-
   const renderDashboard = () => (
     <UserDashboard 
       token={token} 
@@ -310,7 +292,6 @@ function App() {
       onViewChange={handleViewChange} 
     />
   );
-
 
   const renderInvestmentPlans = () => (
     <InvestmentPlans 
@@ -321,7 +302,6 @@ function App() {
     />
   );
 
-
   const renderWithdrawalForm = () => (
     <WithdrawalForm 
       token={token} 
@@ -330,7 +310,6 @@ function App() {
       onBack={() => handleViewChange('dashboard')}
     />
   );
-
 
   const renderRechargeForm = () => (
     <RechargeForm 
@@ -341,7 +320,6 @@ function App() {
     />
   );
 
-
   const renderReferral = () => (
     <Referral 
       token={token} 
@@ -350,14 +328,12 @@ function App() {
     />
   );
 
-
   const renderAdminPanel = () => (
     <AdminPanel 
       token={token} 
       onLogout={handleLogout}
     />
   );
-
 
   return (
     <div className="App">
@@ -381,6 +357,5 @@ function App() {
     </div>
   );
 }
-
 
 export default App;
