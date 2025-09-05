@@ -9,6 +9,8 @@ import Referral from './components/Referral';
 import AdminPanel from './components/AdminPanel';
 
 function App() {
+  const API_BASE_URL = process.env.REACT_APP_API_URL;
+
   const [, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [view, setView] = useState('login'); // 'login', 'register', 'dashboard', 'plans', 'withdraw', 'recharge', 'referral', 'admin'
@@ -62,7 +64,7 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await axios.post('/api/register', registerFormData);
+      const response = await axios.post(`${API_BASE_URL}/api/register`, registerFormData);
       setToken(response.data.token);
       setUser(response.data.user);
       localStorage.setItem('token', response.data.token);
@@ -84,7 +86,7 @@ function App() {
     setLoading(true);
     
     try {
-      const response = await axios.post('/api/login', loginFormData);
+      const response = await axios.post(`${API_BASE_URL}/api/login`, loginFormData);
       
       setToken(response.data.token);
       setUser(response.data.user);
@@ -102,7 +104,7 @@ function App() {
 
   const fetchUserData = async (authToken) => {
     try {
-      const response = await axios.get('/api/data', {
+      const response = await axios.get(`${API_BASE_URL}/api/data`, {
         headers: {
           Authorization: `Bearer ${authToken}`
         }
