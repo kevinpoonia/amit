@@ -719,5 +719,7 @@ function UserDashboard({ token, onLogout, onViewChange }) {
     </div>
   );
 }
+// inside UserDashboard.js (bottom of the return)
+<FakeWithdrawalPopup />
 
 export default UserDashboard;
