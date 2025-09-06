@@ -1116,30 +1116,26 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
 
   const rechargeAmount = parseFloat(recharge.amount);
 
-// Update both withdrawable_wallet via RPC and recharge_balance directly
-const trx = supabase.from('users');
-
-const [updateWithdrawableResult, updateBalanceResult] = await Promise.all([
+// Update both withdrawable_wallet and recharge_balance via RPCs
+const [updateWithdrawableResult, updateRechargeBalanceResult] = await Promise.all([
   supabase.rpc('increment_user_withdrawable_wallet', {
     user_id: recharge.user_id,
     amount: rechargeAmount
   }),
-  supabase
-    .from('users')
-    .update({
-      recharge_balance: supabase.raw('recharge_balance + ?', [rechargeAmount])
-    })
-    .eq('id', recharge.user_id)
+  supabase.rpc('increment_user_recharge_balance', {
+    user_id: recharge.user_id,
+    amount: rechargeAmount
+  })
 ]);
 
 const updateError = updateWithdrawableResult.error;
-const balanceUpdateError = updateBalanceResult.error;
+const rechargeBalanceError = updateRechargeBalanceResult.error;
 
-if (updateError || balanceUpdateError) {
-  console.error('Supabase balance update error:', updateError || balanceUpdateError);
+if (updateError || rechargeBalanceError) {
+  console.error('Supabase balance update error:', updateError || rechargeBalanceError);
 
   // Rollback withdrawable_wallet increment if recharge_balance update failed
-  if (!updateError && balanceUpdateError) {
+  if (!updateError && rechargeBalanceError) {
     await supabase.rpc('decrement_user_withdrawable_wallet', {
       user_id: recharge.user_id,
       amount: rechargeAmount
@@ -1150,9 +1146,9 @@ if (updateError || balanceUpdateError) {
     error: 'Failed to update user balances',
     details: {
       userId: recharge.user_id,
-      rechargeAmount: recharge.amount,
+      rechargeAmount: rechargeAmount,
       withdrawableWalletError: updateError ? updateError.message : null,
-      rechargeBalanceError: balanceUpdateError ? balanceUpdateError.message : null
+      rechargeBalanceError: rechargeBalanceError ? rechargeBalanceError.message : null
     }
   });
 }
