@@ -902,7 +902,7 @@ app.get('/api/fake-withdrawal', (req, res) => {
 // Copy UPI ID endpoint
 app.get('/api/upi-id', (req, res) => {
   try {
-    const upiId = "7047571829@upi";
+    const upiId = "paytmqr5ie2ot@ptys";
     res.json({
       message: 'UPI ID fetched successfully',
       upiId: upiId
@@ -917,7 +917,7 @@ app.get('/api/upi-id', (req, res) => {
 app.get('/api/referral-link', authenticateToken, (req, res) => {
   try {
     const userId = req.user.id;
-    const referralLink = `https://investment-pro-official.netlify.app/referral/${userId}`;
+    const referralLink = `https://https://amit-zeta.vercel.app/referral/${userId}`;
     res.json({
       message: 'Referral link generated successfully',
       referralLink: referralLink
@@ -991,7 +991,7 @@ app.get('/api/leader-box-winners', authenticateToken, async (req, res) => {
     // Generate fake winners (10 entries with random amounts between 1-5 lakh)
     const fakeWinners = [];
     const firstNames = ['Raj', 'Priya', 'Amit', 'Sneha', 'Vikas', 'Anjali', 'Rohit', 'Neha', 'Deepak', 'Pooja'];
-    const lastNames = ['Sharma', 'Patel', 'Singh', 'Gupta', 'Yadav', 'Kumar', 'Das', 'Reddy', 'Verma', 'Mishra'];
+    const lastNames = ['Sharma', 'Patel', 'Chaudhary', 'Gupta', 'Yadav', 'Kumar', 'Das', 'Reddy', 'Verma', 'Mishra'];
     
     for (let i = 0; i < 10; i++) {
       const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
@@ -1132,6 +1132,18 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         }
       });
     }
+    const { error: rechargeBalanceUpdateError } = await supabase
+  .from('users')
+  .update({
+    recharge_balance: supabase.raw('recharge_balance + ?', [rechargeAmount])
+  })
+  .eq('id', recharge.user_id);
+
+if (rechargeBalanceUpdateError) {
+  console.error('Error updating recharge_balance:', rechargeBalanceUpdateError);
+  // Consider rolling back withdrawable_wallet increment here if necessary
+  return res.status(500).json({ error: 'Failed to update recharge balance' });
+}
     
     // Update recharge status
     const { error: rechargeUpdateError, count } = await supabase
