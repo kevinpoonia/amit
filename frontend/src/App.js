@@ -1,3 +1,4 @@
+// App.js
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
@@ -9,7 +10,6 @@ import Referral from './components/Referral';
 import AdminPanel from './components/AdminPanel';
 
 function App() {
-    const [, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const [view, setView] = useState('login');
     const [loginFormData, setLoginFormData] = useState({ mobile: '', password: '' });
@@ -28,11 +28,8 @@ function App() {
     // Check if user is already logged in
     useEffect(() => {
         const savedToken = localStorage.getItem('token');
-        const savedUser = localStorage.getItem('user');
-
-        if (savedToken && savedUser) {
+        if (savedToken) {
             setToken(savedToken);
-            setUser(JSON.parse(savedUser));
             setView('dashboard');
             fetchUserData(savedToken);
         }
@@ -71,9 +68,7 @@ function App() {
         try {
             const response = await axios.post('/api/register', registerFormData);
             setToken(response.data.token);
-            setUser(response.data.user);
             localStorage.setItem('token', response.data.token);
-            localStorage.setItem('user', JSON.stringify(response.data.user));
             setSuccess('Registration successful!');
             setView('dashboard');
             fetchUserData(response.data.token);
@@ -93,9 +88,7 @@ function App() {
         try {
             const response = await axios.post('/api/login', loginFormData);
             setToken(response.data.token);
-            setUser(response.data.user);
             localStorage.setItem('token', response.data.token);
-            localStorage.setItem('user', JSON.stringify(response.data.user));
             setSuccess('Login successful!');
             setView('dashboard');
             fetchUserData(response.data.token);
@@ -121,9 +114,7 @@ function App() {
 
     const handleLogout = () => {
         localStorage.removeItem('token');
-        localStorage.removeItem('user');
         setToken(null);
-        setUser(null);
         setUserData(null);
         setView('login');
         setLoginFormData({ mobile: '', password: '' });
