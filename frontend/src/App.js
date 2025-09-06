@@ -31,6 +31,20 @@ function App() {
 
   const API_BASE_URL = process.env.REACT_APP_API_URL;
 
+  useEffect(() => {
+  const API_BASE_URL = process.env.REACT_APP_API_URL;
+  fetch(`${API_BASE_URL}/api/health`)
+    .then(res => res.json())
+    .then(data => {
+      console.log('HEALTH CHECK:', data);
+      alert(`Backend says: ${data.message || JSON.stringify(data)}`);
+    })
+    .catch(err => {
+      console.error('Health check failed', err);
+      alert('Could NOT reach backend!');
+    });
+}, []);
+
   // Check if user is already logged in
   useEffect(() => {
     const savedToken = localStorage.getItem('token');
