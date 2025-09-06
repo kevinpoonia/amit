@@ -7,6 +7,7 @@ import WithdrawalForm from './components/WithdrawalForm';
 import RechargeForm from './components/RechargeForm';
 import Referral from './components/Referral';
 import AdminPanel from './components/AdminPanel';
+console.log('API_BASE_URL:', process.env.REACT_APP_API_URL);
 
 function App() {
   const [, setUser] = useState(null);
