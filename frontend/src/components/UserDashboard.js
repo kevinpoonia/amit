@@ -6,14 +6,14 @@ const getApiBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
     return 'https://investmentpro-nu7s.onrender.com';
   } else {
-    return '';
+    return 'http://localhost:5000'; // ✅ fallback for local dev
   }
 };
 
 const API_BASE_URL = getApiBaseUrl();
 
-function UserDashboard({ token, userData, onLogout, onViewChange }) {
-  const [localUserData, setLocalUserData] = useState(userData); // keep our own user state
+function UserDashboard({ token, onLogout, onViewChange }) {
+  const [localUserData, setLocalUserData] = useState(null);
   const [investments, setInvestments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -60,7 +60,7 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
     }
   }, [token]);
 
-  // ✅ Fetch data on load
+  // ✅ Initial load
   useEffect(() => {
     if (token) {
       fetchUserProfile();
@@ -78,6 +78,7 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
     }
   }, [token, fetchUserProfile]);
 
+  // ✅ Copy referral link
   const copyReferralLink = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/referral-link`, {
@@ -105,31 +106,42 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
     return Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
   };
 
+  if (!localUserData) {
+    return <div className="loading">Loading dashboard...</div>;
+  }
+
   return (
     <div className="user-dashboard">
       {/* Welcome Section */}
-      <div className="premium-card" style={{ 
+      <div className="premium-card" style={{
         background: 'linear-gradient(135deg, rgba(25, 25, 45, 0.7), rgba(65, 105, 225, 0.2))',
         textAlign: 'center',
         marginBottom: '24px',
         position: 'relative'
       }}>
         <button onClick={onLogout} className="secondary-button"
-          style={{ position: 'absolute', top: '12px', right: '12px', width: '36px', height: '36px',
-                   borderRadius: '50%', padding: '0', display: 'flex', alignItems: 'center',
-                   justifyContent: 'center', fontSize: '16px', cursor: 'pointer' }}
+          style={{
+            position: 'absolute', top: '12px', right: '12px', width: '36px', height: '36px',
+            borderRadius: '50%', padding: '0', display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: '16px', cursor: 'pointer'
+          }}
           title="Logout">
           ⇦
         </button>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-          <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: 'linear-gradient(135deg, #4169e1, #6a8dff)',
-                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>
+          <div style={{
+            width: '50px', height: '50px', borderRadius: '50%',
+            background: 'linear-gradient(135deg, #4169e1, #6a8dff)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px'
+          }}>
             {localUserData?.name?.charAt(0)?.toUpperCase() || 'U'}
           </div>
           <div>
-            <h1 style={{ margin: '0 0 4px 0', fontSize: '24px',
-                         background: 'linear-gradient(to right, var(--gold-primary), var(--royal-blue-light))',
-                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            <h1 style={{
+              margin: '0 0 4px 0', fontSize: '24px',
+              background: 'linear-gradient(to right, var(--gold-primary), var(--royal-blue-light))',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+            }}>
               Welcome Back!
             </h1>
             <p style={{ margin: '0', color: 'var(--text-secondary)', fontSize: '16px' }}>
@@ -149,15 +161,19 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
             <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--text-secondary)', fontWeight: 600 }}>
               Wallet Balance
             </h2>
-            <div style={{ fontSize: '32px', fontWeight: 700, margin: '8px 0',
-                          background: 'linear-gradient(to right, var(--gold-primary), var(--gold-secondary))',
-                          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            <div style={{
+              fontSize: '32px', fontWeight: 700, margin: '8px 0',
+              background: 'linear-gradient(to right, var(--gold-primary), var(--gold-secondary))',
+              WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent'
+            }}>
               {formatCurrency(localUserData?.recharge_balance ?? localUserData?.balance ?? 0)}
             </div>
           </div>
-          <div style={{ width: '50px', height: '50px', borderRadius: '12px',
-                         background: 'rgba(255, 215, 0, 0.1)', display: 'flex',
-                         alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>
+          <div style={{
+            width: '50px', height: '50px', borderRadius: '12px',
+            background: 'rgba(255, 215, 0, 0.1)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', fontSize: '24px'
+          }}>
             💰
           </div>
         </div>
@@ -176,11 +192,14 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
           <div>
             <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Today</p>
             <p style={{ margin: 0, color: 'var(--success)', fontWeight: 600 }}>
-              +{formatCurrency(investments.reduce((sum, inv) => inv.days_left > 0 ? sum + (inv.daily_income || 0) : sum, 0))}
+              +{formatCurrency(investments.reduce((sum, inv) =>
+                inv.days_left > 0 ? sum + (inv.daily_income || 0) : sum, 0))}
             </p>
           </div>
         </div>
       </div>
+
+     
 
            {/* Active Investments */}
       <div className="premium-card">
