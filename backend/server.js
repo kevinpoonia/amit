@@ -12,7 +12,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Log the port for debugging
+// Log the port and env variables for debugging
 console.log(`Attempting to start server on port: ${PORT}`);
 console.log(`Environment variables:`);
 console.log(`PORT: ${process.env.PORT}`);
@@ -20,19 +20,19 @@ console.log(`SUPABASE_URL: ${process.env.SUPABASE_URL ? 'SET' : 'NOT SET'}`);
 console.log(`SUPABASE_API_KEY: ${process.env.SUPABASE_API_KEY ? 'SET' : 'NOT SET'}`);
 console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? 'SET' : 'NOT SET'}`);
 
-// Add CORS middleware here to allow frontend domain access
+// Configure CORS properly — single call
 app.use(cors({
-  origin: 'https://amit-zeta.vercel.app',  // Your frontend URL, NOT your backend URL
+  origin: 'https://amit-zeta.vercel.app',  // Your frontend URL
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
-
+// Handle CORS preflight requests explicitly
 app.options('*', cors());
 
-
-// Middleware
-app.use(cors());
+// Body parser middleware for JSON
 app.use(express.json());
 
 // Initialize Supabase client
@@ -44,11 +44,9 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });
   }
-
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
@@ -57,6 +55,7 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
 
 // Helper function to generate random data for marketing stats
 const generateMarketingStats = () => {
