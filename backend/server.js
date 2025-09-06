@@ -1114,25 +1114,49 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
       return res.status(404).json({ error: 'Pending recharge request not found' });
     }
 
-    // Update user withdrawable wallet
-    const rechargeAmount = parseFloat(recharge.amount);
-    
-    const { error: updateError } = await supabase.rpc('increment_user_withdrawable_wallet', {
+  const rechargeAmount = parseFloat(recharge.amount);
+
+// Update both withdrawable_wallet via RPC and recharge_balance directly
+const trx = supabase.from('users');
+
+const [updateWithdrawableResult, updateBalanceResult] = await Promise.all([
+  supabase.rpc('increment_user_withdrawable_wallet', {
+    user_id: recharge.user_id,
+    amount: rechargeAmount
+  }),
+  supabase
+    .from('users')
+    .update({
+      recharge_balance: supabase.raw('recharge_balance + ?', [rechargeAmount])
+    })
+    .eq('id', recharge.user_id)
+]);
+
+const updateError = updateWithdrawableResult.error;
+const balanceUpdateError = updateBalanceResult.error;
+
+if (updateError || balanceUpdateError) {
+  console.error('Supabase balance update error:', updateError || balanceUpdateError);
+
+  // Rollback withdrawable_wallet increment if recharge_balance update failed
+  if (!updateError && balanceUpdateError) {
+    await supabase.rpc('decrement_user_withdrawable_wallet', {
       user_id: recharge.user_id,
       amount: rechargeAmount
     });
+  }
 
-    if (updateError) {
-      console.error('Supabase balance update error:', updateError);
-      return res.status(500).json({ 
-        error: 'Failed to update user balance: ' + updateError.message,
-        details: {
-          userId: recharge.user_id,
-          rechargeAmount: recharge.amount
-        }
-      });
+  return res.status(500).json({
+    error: 'Failed to update user balances',
+    details: {
+      userId: recharge.user_id,
+      rechargeAmount: recharge.amount,
+      withdrawableWalletError: updateError ? updateError.message : null,
+      rechargeBalanceError: balanceUpdateError ? balanceUpdateError.message : null
     }
-  
+  });
+}
+
     
     // Update recharge status
     const { error: rechargeUpdateError, count } = await supabase
