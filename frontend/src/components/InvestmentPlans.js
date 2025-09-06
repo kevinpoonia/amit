@@ -299,7 +299,7 @@ function InvestmentPlans({ token, onPlanPurchase, userData, onBack }) {
                   style={{ width: '100%', padding: '16px' }}
                 >
                   {loading ? 'Processing...' : 
-                   (userData?.balance || 0) < plan.price ? 'Insufficient Balance' : 'Purchase Plan'}
+                   (userData?.walletbalance || 0) < plan.price ? 'Insufficient Balance' : 'Purchase Plan'}
                 </button>
                 
                 {(userData?.balance || 0) < plan.price && (
