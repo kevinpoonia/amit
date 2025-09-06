@@ -1,63 +1,51 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useRef } from "react";
+import axios from "axios";
 
-// Determine the API base URL based on environment
-const getApiBaseUrl = () => {
-  if (process.env.NODE_ENV === 'production') {
-    // In production, use the Render backend URL
-    return 'https://investmentpro-nu7s.onrender.com';
-  } else {
-    // In development, use the proxy
-    return '';
-  }
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "https://investmentpro-nu7s.onrender.com";
 
 function FakeWithdrawalPopup() {
   const [showPopup, setShowPopup] = useState(false);
   const [withdrawalData, setWithdrawalData] = useState(null);
-  const [timer, setTimer] = useState(null);
+  const timerRef = useRef(null);
 
   useEffect(() => {
-    // Start the timer when component mounts
-    startTimer();
-    
-    // Cleanup timer on unmount
+    // Start interval on mount
+    timerRef.current = setInterval(() => {
+      generateFakeWithdrawal();
+    }, 10000); // every 10s
+
+    // Cleanup on unmount
     return () => {
-      if (timer) {
-        clearInterval(timer);
-      }
+      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
-  const startTimer = () => {
-    // Clear existing timer if any
-    if (timer) {
-      clearInterval(timer);
-    }
-    
-    // Start new timer (every 10 seconds)
-    const newTimer = setInterval(() => {
-      generateFakeWithdrawal();
-    }, 10000); // Every 10 seconds
-    
-    setTimer(newTimer);
-  };
-
   const generateFakeWithdrawal = async () => {
     try {
+      // Try to fetch from backend
       const response = await axios.get(`${API_BASE_URL}/api/fake-withdrawal`);
       setWithdrawalData(response.data.withdrawal);
-      setShowPopup(true);
-      
-      // Hide popup after 5 seconds
-      setTimeout(() => {
-        setShowPopup(false);
-      }, 5000);
     } catch (err) {
-      console.error('Failed to generate fake withdrawal:', err);
+      console.warn("Backend route missing, using local fake data...");
+
+      // Fallback: generate local fake withdrawal
+      const fakeNames = ["Rahul", "Sneha", "Amit", "Kavya", "Arjun", "Priya"];
+      const randomName = fakeNames[Math.floor(Math.random() * fakeNames.length)];
+      const fakeAmount = Math.floor(Math.random() * 5000 + 500); // ₹500 - ₹5500
+      const fakeData = {
+        name: randomName,
+        amount: fakeAmount,
+        timestamp: new Date().toLocaleTimeString("en-IN"),
+      };
+      setWithdrawalData(fakeData);
     }
+
+    // Show popup
+    setShowPopup(true);
+
+    // Auto-hide after 5s
+    setTimeout(() => setShowPopup(false), 5000);
   };
 
   return (
