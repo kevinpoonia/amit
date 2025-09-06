@@ -1,68 +1,102 @@
-import React, { useState, useEffect, useCallback } from "react";
-import FakeWithdrawalPopup from './FakeWithdrawalPopup';
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 
-import axios from "axios";
-
-// Determine the API base URL based on environment
+// ---------------- API Base URL ----------------
 const getApiBaseUrl = () => {
-  if (process.env.NODE_ENV === "production") {
-    return "https://investmentpro-nu7s.onrender.com";
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://investmentpro-nu7s.onrender.com';
   } else {
-    return "http://localhost:5000"; // ✅ fallback for local dev
+    return 'http://localhost:5000';
   }
 };
 
 const API_BASE_URL = getApiBaseUrl();
 
+// ---------------- FakeWithdrawalPopup Component ----------------
+function FakeWithdrawalPopup() {
+  const [showPopup, setShowPopup] = useState(false);
+  const [withdrawalData, setWithdrawalData] = useState(null);
+  const [timer, setTimer] = useState(null);
+
+  useEffect(() => {
+    const newTimer = setInterval(() => generateFakeWithdrawal(), 10000); // every 10s
+    setTimer(newTimer);
+    return () => clearInterval(newTimer);
+  }, []);
+
+  const generateFakeWithdrawal = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/fake-withdrawal`);
+      setWithdrawalData(response.data.withdrawal);
+      setShowPopup(true);
+      setTimeout(() => setShowPopup(false), 5000); // hide after 5s
+    } catch (err) {
+      console.error('Failed to generate fake withdrawal:', err);
+    }
+  };
+
+  return (
+    <>
+      {showPopup && withdrawalData && (
+        <div style={{
+          position: 'fixed', bottom: '20px', right: '20px', zIndex: 9999,
+          background: 'rgba(0,0,0,0.85)', color: '#fff',
+          padding: '16px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          width: '220px', fontSize: '14px'
+        }}>
+          <strong>New Withdrawal!</strong>
+          <p style={{ margin: '4px 0' }}>{withdrawalData.name}</p>
+          <p style={{ margin: '4px 0' }}>₹{withdrawalData.amount.toLocaleString()}</p>
+          <p style={{ margin: '4px 0', fontSize: '12px', color: '#ccc' }}>{withdrawalData.timestamp}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------- UserDashboard Component ----------------
 function UserDashboard({ token, onLogout, onViewChange }) {
   const [localUserData, setLocalUserData] = useState(null);
   const [investments, setInvestments] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [totalProfit, setTotalProfit] = useState(0);
   const [withdrawableBalance, setWithdrawableBalance] = useState(0);
 
-  // ✅ Fetch latest user info (balance, etc.)
+  // Fetch user profile
   const fetchUserProfile = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/data`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.data?.user) {
-        setLocalUserData(res.data.user);
-      }
+      if (res.data?.user) setLocalUserData(res.data.user);
     } catch (err) {
-      console.error("Failed to fetch user profile:", err);
+      console.error('Failed to fetch user profile:', err);
     }
   }, [token]);
 
-  // ✅ Fetch investments + financial summary
+  // Fetch investments and financial summary
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     try {
-      const [investmentsRes, financialSummaryRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/investments`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        axios.get(`${API_BASE_URL}/api/financial-summary`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+      const [investmentsRes, summaryRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/investments`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_BASE_URL}/api/financial-summary`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
-
       setInvestments(investmentsRes.data.investments || []);
-      if (financialSummaryRes.data) {
-        setTotalProfit(financialSummaryRes.data.totalProfit || 0);
-        setWithdrawableBalance(financialSummaryRes.data.withdrawableBalance || 0);
+      if (summaryRes.data) {
+        setTotalProfit(summaryRes.data.totalProfit || 0);
+        setWithdrawableBalance(summaryRes.data.withdrawableBalance || 0);
       }
     } catch (err) {
-      console.error("Failed to fetch dashboard data:", err);
-      setError("Failed to load dashboard data. Please try again.");
+      console.error('Failed to fetch dashboard data:', err);
+      setError('Failed to load dashboard data.');
     } finally {
       setLoading(false);
     }
   }, [token]);
 
-  // ✅ Initial load
+  // Initial load
   useEffect(() => {
     if (token) {
       fetchUserProfile();
@@ -70,658 +104,74 @@ function UserDashboard({ token, onLogout, onViewChange }) {
     }
   }, [token, fetchUserProfile, fetchDashboardData]);
 
-  // ✅ Poll for balance updates every 10s
+  // Poll for balance updates every 10s
   useEffect(() => {
-    if (token) {
-      const interval = setInterval(() => {
-        fetchUserProfile();
-      }, 10000);
-      return () => clearInterval(interval);
-    }
+    if (!token) return;
+    const interval = setInterval(() => fetchUserProfile(), 10000);
+    return () => clearInterval(interval);
   }, [token, fetchUserProfile]);
 
-  // ✅ Copy referral link
-  const copyReferralLink = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/referral-link`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      navigator.clipboard.writeText(response.data.referralLink);
-      alert("Referral link copied to clipboard!");
-    } catch (err) {
-      alert("Failed to copy referral link");
-    }
-  };
-
   const formatCurrency = (amount) =>
-    new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 2,
-    }).format(amount);
+    new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(amount);
 
   const calculateProgress = (investment) => {
-    if (!investment || !investment.duration_days || investment.duration_days <= 0)
-      return 0;
+    if (!investment || !investment.duration_days || investment.duration_days <= 0) return 0;
     const totalDays = investment.duration_days;
     const daysLeft = investment.days_left || 0;
     const daysPassed = totalDays - daysLeft;
     return Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
   };
 
-  if (!localUserData) {
-    return <div className="loading">Loading dashboard...</div>;
-  }
+  if (!localUserData) return <div>Loading dashboard...</div>;
 
   return (
-    <div className="user-dashboard">
-      {/* Welcome Section */}
-      <div
-        className="premium-card"
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(25, 25, 45, 0.7), rgba(65, 105, 225, 0.2))",
-          textAlign: "center",
-          marginBottom: "24px",
-          position: "relative",
-        }}
-      >
-        <button
-          onClick={onLogout}
-          className="secondary-button"
-          style={{
-            position: "absolute",
-            top: "12px",
-            right: "12px",
-            width: "36px",
-            height: "36px",
-            borderRadius: "50%",
-            padding: "0",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: "16px",
-            cursor: "pointer",
-          }}
-          title="Logout"
-        >
-          ⇦
-        </button>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "12px",
-          }}
-        >
-          <div
-            style={{
-              width: "50px",
-              height: "50px",
-              borderRadius: "50%",
-              background: "linear-gradient(135deg, #4169e1, #6a8dff)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "24px",
-            }}
-          >
-            {localUserData?.name?.charAt(0)?.toUpperCase() || "U"}
-          </div>
-          <div>
-            <h1
-              style={{
-                margin: "0 0 4px 0",
-                fontSize: "24px",
-                background:
-                  "linear-gradient(to right, var(--gold-primary), var(--royal-blue-light))",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              Welcome Back!
-            </h1>
-            <p
-              style={{
-                margin: "0",
-                color: "var(--text-secondary)",
-                fontSize: "16px",
-              }}
-            >
-              {localUserData?.name || "User"}
-            </p>
-          </div>
-        </div>
+    <div style={{ padding: '16px' }}>
+      {/* Header / Welcome */}
+      <div style={{
+        marginBottom: '24px', padding: '16px',
+        background: 'linear-gradient(135deg, rgba(25,25,45,0.7), rgba(65,105,225,0.2))',
+        borderRadius: '12px', position: 'relative'
+      }}>
+        <button onClick={onLogout} style={{
+          position: 'absolute', top: '12px', right: '12px',
+          width: '36px', height: '36px', borderRadius: '50%'
+        }}>⇦</button>
+        <h2>Welcome Back, {localUserData.name}</h2>
+        <p>Wallet: {formatCurrency(localUserData?.recharge_balance ?? localUserData?.balance ?? 0)}</p>
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {loading && <div className="loading">Loading dashboard data...</div>}
-
-      {/* Wallet Balance */}
-      <div className="premium-card">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "16px",
-          }}
-        >
-          <div>
-            <h2
-              style={{
-                margin: 0,
-                fontSize: "18px",
-                color: "var(--text-secondary)",
-                fontWeight: 600,
-              }}
-            >
-              Wallet Balance
-            </h2>
-            <div
-              style={{
-                fontSize: "32px",
-                fontWeight: 700,
-                margin: "8px 0",
-                background:
-                  "linear-gradient(to right, var(--gold-primary), var(--gold-secondary))",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              {formatCurrency(
-                localUserData?.recharge_balance ?? localUserData?.balance ?? 0
-              )}
+      {/* Investments */}
+      <div style={{ marginBottom: '24px' }}>
+        <h3>Active Investments ({investments.length})</h3>
+        {investments.length ? investments.map(inv => {
+          const progress = calculateProgress(inv);
+          return (
+            <div key={inv.id} style={{
+              marginBottom: '16px', padding: '12px', background: 'rgba(30,30,50,0.5)', borderRadius: '8px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>{inv.plan_name} - {formatCurrency(inv.amount)}</span>
+                <span>{inv.status}</span>
+              </div>
+              <div style={{ height: '8px', background: '#333', borderRadius: '4px', marginTop: '8px', overflow: 'hidden' }}>
+                <div style={{ width: `${progress}%`, height: '100%', background: '#4169e1', transition: 'width 1s' }}></div>
+              </div>
             </div>
-          </div>
-          <div
-            style={{
-              width: "50px",
-              height: "50px",
-              borderRadius: "12px",
-              background: "rgba(255, 215, 0, 0.1)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "24px",
-            }}
-          >
-            💰
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginTop: "16px",
-          }}
-        >
-          <div>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--text-secondary)",
-                fontSize: "14px",
-              }}
-            >
-              Total Profit
-            </p>
-            <p style={{ margin: 0, color: "var(--success)", fontWeight: 600 }}>
-              {formatCurrency(totalProfit)}
-            </p>
-          </div>
-          <div>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--text-secondary)",
-                fontSize: "14px",
-              }}
-            >
-              Withdrawable
-            </p>
-            <p style={{ margin: 0, fontWeight: 600 }}>
-              {formatCurrency(withdrawableBalance)}
-            </p>
-          </div>
-          <div>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--text-secondary)",
-                fontSize: "14px",
-              }}
-            >
-              Today
-            </p>
-            <p
-              style={{
-                margin: 0,
-                color: "var(--success)",
-                fontWeight: 600,
-              }}
-            >
-              +
-              {formatCurrency(
-                investments.reduce(
-                  (sum, inv) =>
-                    inv.days_left > 0 ? sum + (inv.daily_income || 0) : sum,
-                  0
-                )
-              )}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Active Investments */}
-      <div className="premium-card">
-        <h2
-          style={{
-            margin: "0 0 20px 0",
-            fontSize: "20px",
-            color: "var(--text-primary)",
-            fontWeight: "600",
-          }}
-        >
-          Active Investments ({investments.length})
-        </h2>
-
-        {investments.length > 0 ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {investments.map((investment) => {
-              const progress = calculateProgress(investment);
-              return (
-                <div
-                  key={investment.id}
-                  className="premium-card"
-                  style={{
-                    margin: 0,
-                    padding: "16px",
-                    background: "rgba(30, 30, 50, 0.5)",
-                    border: "1px solid rgba(255, 255, 255, 0.05)",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      marginBottom: "12px",
-                    }}
-                  >
-                    <div>
-                      <h3
-                        style={{
-                          margin: "0 0 4px 0",
-                          fontSize: "18px",
-                          color: "var(--text-primary)",
-                          fontWeight: "600",
-                        }}
-                      >
-                        {investment.plan_name}
-                      </h3>
-                      <p
-                        style={{
-                          margin: "0",
-                          color: "var(--gold-primary)",
-                          fontSize: "16px",
-                          fontWeight: "600",
-                        }}
-                      >
-                        {formatCurrency(investment.amount)}
-                      </p>
-                    </div>
-                    <span
-                      style={{
-                        background: "rgba(0, 200, 83, 0.1)",
-                        color: "var(--success)",
-                        padding: "4px 12px",
-                        borderRadius: "20px",
-                        fontSize: "12px",
-                        fontWeight: "600",
-                      }}
-                    >
-                      {investment.status}
-                    </span>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      marginBottom: "12px",
-                    }}
-                  >
-                    <div>
-                      <p
-                        style={{
-                          margin: "0 0 4px 0",
-                          color: "var(--text-secondary)",
-                          fontSize: "14px",
-                        }}
-                      >
-                        Daily Income
-                      </p>
-                      <p
-                        style={{
-                          margin: "0",
-                          color: "var(--text-primary)",
-                          fontWeight: "600",
-                        }}
-                      >
-                        {formatCurrency(investment.daily_income)}
-                      </p>
-                    </div>
-                    <div>
-                      <p
-                        style={{
-                          margin: "0 0 4px 0",
-                          color: "var(--text-secondary)",
-                          fontSize: "14px",
-                        }}
-                      >
-                        Days Left
-                      </p>
-                      <p
-                        style={{
-                          margin: "0",
-                          color: "var(--text-primary)",
-                          fontWeight: "600",
-                        }}
-                      >
-                        {investment.days_left}
-                      </p>
-                    </div>
-                    <div>
-                      <p
-                        style={{
-                          margin: "0 0 4px 0",
-                          color: "var(--text-secondary)",
-                          fontSize: "14px",
-                        }}
-                      >
-                        ROI
-                      </p>
-                      <p
-                        style={{
-                          margin: "0",
-                          color: "var(--success)",
-                          fontWeight: "600",
-                        }}
-                      >
-                        {investment.duration_days
-                          ? Math.round(
-                              ((investment.daily_income * investment.duration_days) /
-                                investment.amount) *
-                                100
-                            )
-                          : 0}
-                        %
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Progress Bar */}
-                  <div style={{ marginBottom: "8px" }}>
-                    <div
-                      style={{
-                        height: "8px",
-                        background: "rgba(255, 255, 255, 0.1)",
-                        borderRadius: "4px",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${progress}%`,
-                          background:
-                            "linear-gradient(90deg, var(--royal-blue), var(--royal-blue-light))",
-                          borderRadius: "4px",
-                          transition: "width 1s cubic-bezier(0.22, 0.61, 0.36, 1)",
-                        }}
-                      ></div>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "12px",
-                      color: "var(--text-secondary)",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <span>Progress</span>
-                    <span>
-                      {investment.duration_days
-                        ? investment.duration_days - investment.days_left
-                        : 0}
-                      /{investment.duration_days || 0} days
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p
-            style={{
-              textAlign: "center",
-              color: "var(--text-secondary)",
-              padding: "24px 0",
-            }}
-          >
-            No active investments
-          </p>
-        )}
+          );
+        }) : <p>No active investments</p>}
       </div>
 
       {/* Quick Actions */}
-      <div style={{ padding: "0 16px 24px 16px" }}>
-        <h2
-          style={{
-            margin: "0 0 16px 0",
-            fontSize: "20px",
-            color: "var(--text-primary)",
-            fontWeight: "600",
-          }}
-        >
-          Quick Actions
-        </h2>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
-            gap: "16px",
-            marginBottom: "24px",
-          }}
-        >
-          <button
-            className="secondary-button"
-            onClick={() => onViewChange("plans")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "16px 8px",
-              height: "80px",
-            }}
-          >
-            <span style={{ fontSize: "24px", marginBottom: "8px" }}>📋</span>
-            <span style={{ fontSize: "12px" }}>Products</span>
-          </button>
-
-          <button
-            className="secondary-button"
-            onClick={() => onViewChange("recharge")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "16px 8px",
-              height: "80px",
-            }}
-          >
-            <span style={{ fontSize: "24px", marginBottom: "8px" }}>💳</span>
-            <span style={{ fontSize: "12px" }}>Recharge</span>
-          </button>
-
-          <button
-            className="secondary-button"
-            onClick={() => onViewChange("withdraw")}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "16px 8px",
-              height: "80px",
-            }}
-          >
-            <span style={{ fontSize: "24px", marginBottom: "8px" }}>💸</span>
-            <span style={{ fontSize: "12px" }}>Withdraw</span>
-          </button>
-
-          <button
-            className="secondary-button"
-            onClick={copyReferralLink}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "16px 8px",
-              height: "80px",
-            }}
-          >
-            <span style={{ fontSize: "24px", marginBottom: "8px" }}>🔗</span>
-            <span style={{ fontSize: "12px" }}>Refer</span>
-          </button>
-        </div>
-
-        {localUserData?.is_admin && (
-          <button
-            className="gradient-button"
-            onClick={() => onViewChange("admin")}
-            style={{ width: "100%", padding: "16px" }}
-          >
-            <span>🔒 Admin Panel</span>
-          </button>
-        )}
+      <div style={{ marginBottom: '24px' }}>
+        <button onClick={() => onViewChange('plans')}>Products</button>
+        <button onClick={() => onViewChange('recharge')}>Recharge</button>
+        <button onClick={() => onViewChange('withdraw')}>Withdraw</button>
       </div>
 
-      {/* Market Insights */}
-      <div className="premium-card">
-        <div style={{ display: "flex", alignItems: "center", marginBottom: "16px" }}>
-          <div
-            style={{
-              width: "40px",
-              height: "40px",
-              borderRadius: "12px",
-              background: "rgba(255, 171, 0, 0.1)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              marginRight: "12px",
-            }}
-          >
-            📈
-          </div>
-          <h2
-            style={{
-              margin: "0",
-              fontSize: "18px",
-              color: "var(--text-primary)",
-              fontWeight: "600",
-            }}
-          >
-            Market Insights
-          </h2>
-        </div>
-
-        <p
-          style={{
-            margin: "0 0 16px 0",
-            color: "var(--text-secondary)",
-            lineHeight: "1.5",
-          }}
-        >
-          Market is bullish today! High-performing plans showing +3.2% returns.
-        </p>
-
-        <button
-          className="secondary-button"
-          onClick={() => onViewChange("plans")}
-          style={{ width: "100%" }}
-        >
-          View Recommendations
-        </button>
-      </div>
-
-      {/* Security Badge */}
-      <div className="premium-card">
-        <div style={{ display: "flex", alignItems: "center" }}>
-          <div
-            style={{
-              width: "40px",
-              height: "40px",
-              borderRadius: "12px",
-              background: "rgba(0, 200, 83, 0.1)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "20px",
-              marginRight: "12px",
-            }}
-          >
-            🔒
-          </div>
-          <div>
-            <h3
-              style={{
-                margin: "0 0 4px 0",
-                fontSize: "16px",
-                color: "var(--text-primary)",
-                fontWeight: "600",
-              }}
-            >
-              Platform Security
-            </h3>
-            <p
-              style={{
-                margin: "0",
-                color: "var(--text-secondary)",
-                fontSize: "14px",
-              }}
-            >
-              Your investments are protected with bank-grade encryption.
-            </p>
-          </div>
-        </div>
-        <button
-          className="secondary-button"
-          style={{ width: "100%", marginTop: "16px" }}
-        >
-          Learn More
-        </button>
-      </div>
-
-      {/* Floating Action Button */}
-      <button className="fab" onClick={() => onViewChange("recharge")}>
-        +
-      </button>
+      {/* Include FakeWithdrawalPopup */}
+      <FakeWithdrawalPopup />
     </div>
   );
 }
-// inside UserDashboard.js (bottom of the return)
-<FakeWithdrawalPopup />
 
 export default UserDashboard;
