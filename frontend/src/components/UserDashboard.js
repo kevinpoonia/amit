@@ -4,10 +4,8 @@ import axios from 'axios';
 // Determine the API base URL based on environment
 const getApiBaseUrl = () => {
   if (process.env.NODE_ENV === 'production') {
-    // In production, use the Render backend URL
     return 'https://investmentpro-nu7s.onrender.com';
   } else {
-    // In development, use the proxy
     return '';
   }
 };
@@ -15,60 +13,76 @@ const getApiBaseUrl = () => {
 const API_BASE_URL = getApiBaseUrl();
 
 function UserDashboard({ token, userData, onLogout, onViewChange }) {
+  const [localUserData, setLocalUserData] = useState(userData); // keep our own user state
   const [investments, setInvestments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [totalProfit, setTotalProfit] = useState(0);
   const [withdrawableBalance, setWithdrawableBalance] = useState(0);
 
+  // ✅ Fetch latest user info (balance, etc.)
+  const fetchUserProfile = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_BASE_URL}/api/data`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data?.user) {
+        setLocalUserData(res.data.user);
+      }
+    } catch (err) {
+      console.error('Failed to fetch user profile:', err);
+    }
+  }, [token]);
+
+  // ✅ Fetch investments + financial summary
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
-
     try {
-      // Fetch investments and financial summary
       const [investmentsRes, financialSummaryRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/api/investments`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
+          headers: { Authorization: `Bearer ${token}` }
         }),
         axios.get(`${API_BASE_URL}/api/financial-summary`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
+          headers: { Authorization: `Bearer ${token}` }
         })
       ]);
 
       setInvestments(investmentsRes.data.investments || []);
-      
-      // Set financial data
       if (financialSummaryRes.data) {
         setTotalProfit(financialSummaryRes.data.totalProfit || 0);
         setWithdrawableBalance(financialSummaryRes.data.withdrawableBalance || 0);
       }
     } catch (err) {
       console.error('Failed to fetch dashboard data:', err);
-      // Set error message to display to user
       setError('Failed to load dashboard data. Please try again.');
     } finally {
       setLoading(false);
     }
   }, [token]);
 
+  // ✅ Fetch data on load
   useEffect(() => {
     if (token) {
+      fetchUserProfile();
       fetchDashboardData();
     }
-  }, [token, fetchDashboardData]);
+  }, [token, fetchUserProfile, fetchDashboardData]);
+
+  // ✅ Poll for balance updates every 10s
+  useEffect(() => {
+    if (token) {
+      const interval = setInterval(() => {
+        fetchUserProfile();
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [token, fetchUserProfile]);
 
   const copyReferralLink = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/referral-link`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
+        headers: { Authorization: `Bearer ${token}` }
       });
-      
       navigator.clipboard.writeText(response.data.referralLink);
       alert('Referral link copied to clipboard!');
     } catch (err) {
@@ -76,29 +90,20 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
     }
   };
 
-  // Format currency
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-IN', {
+  const formatCurrency = (amount) =>
+    new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
       maximumFractionDigits: 2
     }).format(amount);
-  };
 
-  // Calculate investment progress percentage
   const calculateProgress = (investment) => {
     if (!investment || !investment.duration_days || investment.duration_days <= 0) return 0;
-    
     const totalDays = investment.duration_days;
     const daysLeft = investment.days_left || 0;
     const daysPassed = totalDays - daysLeft;
-    
-    // Calculate progress as percentage
-    const progress = (daysPassed / totalDays) * 100;
-    return Math.min(100, Math.max(0, progress));
+    return Math.min(100, Math.max(0, (daysPassed / totalDays) * 100));
   };
-
-  
 
   return (
     <div className="user-dashboard">
@@ -109,52 +114,26 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
         marginBottom: '24px',
         position: 'relative'
       }}>
-        <button 
-          onClick={onLogout}
-          className="secondary-button"
-          style={{ 
-            position: 'absolute',
-            top: '12px',
-            right: '12px',
-            width: '36px', 
-            height: '36px', 
-            borderRadius: '50%',
-            padding: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '16px',
-            cursor: 'pointer'
-          }}
-          title="Logout"
-        >
+        <button onClick={onLogout} className="secondary-button"
+          style={{ position: 'absolute', top: '12px', right: '12px', width: '36px', height: '36px',
+                   borderRadius: '50%', padding: '0', display: 'flex', alignItems: 'center',
+                   justifyContent: 'center', fontSize: '16px', cursor: 'pointer' }}
+          title="Logout">
           ⇦
         </button>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-          <div style={{ 
-            width: '50px', 
-            height: '50px', 
-            borderRadius: '50%', 
-            background: 'linear-gradient(135deg, #4169e1, #6a8dff)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '24px'
-          }}>
-            {userData?.name?.charAt(0)?.toUpperCase() || 'U'}
+          <div style={{ width: '50px', height: '50px', borderRadius: '50%', background: 'linear-gradient(135deg, #4169e1, #6a8dff)',
+                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>
+            {localUserData?.name?.charAt(0)?.toUpperCase() || 'U'}
           </div>
           <div>
-            <h1 style={{ 
-              margin: '0 0 4px 0', 
-              fontSize: '24px', 
-              background: 'linear-gradient(to right, var(--gold-primary), var(--royal-blue-light))',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}>
+            <h1 style={{ margin: '0 0 4px 0', fontSize: '24px',
+                         background: 'linear-gradient(to right, var(--gold-primary), var(--royal-blue-light))',
+                         WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
               Welcome Back!
             </h1>
             <p style={{ margin: '0', color: 'var(--text-secondary)', fontSize: '16px' }}>
-              {userData?.name || 'User'}
+              {localUserData?.name || 'User'}
             </p>
           </div>
         </div>
@@ -163,79 +142,47 @@ function UserDashboard({ token, userData, onLogout, onViewChange }) {
       {error && <div className="error">{error}</div>}
       {loading && <div className="loading">Loading dashboard data...</div>}
 
-      {/* Wallet Balance Card - Premium Financial Card */}
+      {/* Wallet Balance */}
       <div className="premium-card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
-            <h2 style={{ 
-              margin: '0 0 8px 0', 
-              fontSize: '18px', 
-              color: 'var(--text-secondary)',
-              fontWeight: '600'
-            }}>
+            <h2 style={{ margin: 0, fontSize: '18px', color: 'var(--text-secondary)', fontWeight: 600 }}>
               Wallet Balance
             </h2>
-            <div style={{ 
-              fontSize: '32px', 
-              fontWeight: '700', 
-              color: 'var(--text-primary)',
-              margin: '8px 0',
-              background: 'linear-gradient(to right, var(--gold-primary), var(--gold-secondary))',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
-            }}>
-              {formatCurrency(userData?.recharge_balance !== undefined ? userData?.recharge_balance : userData?.balance || 0)}
+            <div style={{ fontSize: '32px', fontWeight: 700, margin: '8px 0',
+                          background: 'linear-gradient(to right, var(--gold-primary), var(--gold-secondary))',
+                          WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+              {formatCurrency(localUserData?.recharge_balance ?? localUserData?.balance ?? 0)}
             </div>
           </div>
-          <div style={{ 
-            width: '50px', 
-            height: '50px', 
-            borderRadius: '12px', 
-            background: 'rgba(255, 215, 0, 0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '24px'
-          }}>
+          <div style={{ width: '50px', height: '50px', borderRadius: '12px',
+                         background: 'rgba(255, 215, 0, 0.1)', display: 'flex',
+                         alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>
             💰
           </div>
         </div>
-        
+
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px' }}>
           <div>
-            <p style={{ margin: '0 0 4px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-              Total Profit
-            </p>
-            <p style={{ margin: '0', color: 'var(--success)', fontWeight: '600' }}>
+            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Total Profit</p>
+            <p style={{ margin: 0, color: 'var(--success)', fontWeight: 600 }}>
               {formatCurrency(totalProfit)}
             </p>
           </div>
           <div>
-            <p style={{ margin: '0 0 4px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-              Withdrawable
-            </p>
-            <p style={{ margin: '0', color: 'var(--text-primary)', fontWeight: '600' }}>
-              {formatCurrency(withdrawableBalance)}
-            </p>
+            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Withdrawable</p>
+            <p style={{ margin: 0, fontWeight: 600 }}>{formatCurrency(withdrawableBalance)}</p>
           </div>
           <div>
-            <p style={{ margin: '0 0 4px 0', color: 'var(--text-secondary)', fontSize: '14px' }}>
-              Today
-            </p>
-            <p style={{ margin: '0', color: 'var(--success)', fontWeight: '600' }}>
-              +{formatCurrency(investments.reduce((sum, investment) => {
-                // Only include investments that are still active (days_left > 0)
-                if (investment.days_left > 0) {
-                  return sum + (investment.daily_income || 0);
-                }
-                return sum;
-              }, 0))}
+            <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '14px' }}>Today</p>
+            <p style={{ margin: 0, color: 'var(--success)', fontWeight: 600 }}>
+              +{formatCurrency(investments.reduce((sum, inv) => inv.days_left > 0 ? sum + (inv.daily_income || 0) : sum, 0))}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Active Investments */}
+           {/* Active Investments */}
       <div className="premium-card">
         <h2 style={{ 
           margin: '0 0 20px 0', 
