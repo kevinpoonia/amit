@@ -917,7 +917,7 @@ app.get('/api/upi-id', (req, res) => {
 app.get('/api/referral-link', authenticateToken, (req, res) => {
   try {
     const userId = req.user.id;
-    const referralLink = `https://https://amit-zeta.vercel.app/referral/${userId}`;
+    const referralLink = `https://amit-zeta.vercel.app/referral/${userId}`;
     res.json({
       message: 'Referral link generated successfully',
       referralLink: referralLink
@@ -1132,18 +1132,7 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         }
       });
     }
-    const { error: rechargeBalanceUpdateError } = await supabase
-  .from('users')
-  .update({
-    recharge_balance: supabase.raw('recharge_balance + ?', [rechargeAmount])
-  })
-  .eq('id', recharge.user_id);
-
-if (rechargeBalanceUpdateError) {
-  console.error('Error updating recharge_balance:', rechargeBalanceUpdateError);
-  // Consider rolling back withdrawable_wallet increment here if necessary
-  return res.status(500).json({ error: 'Failed to update recharge balance' });
-}
+  
     
     // Update recharge status
     const { error: rechargeUpdateError, count } = await supabase
