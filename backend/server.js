@@ -12,27 +12,24 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Log the port and env variables for debugging
 console.log(`Attempting to start server on port: ${PORT}`);
-console.log(`Environment variables:`);
-console.log(`PORT: ${process.env.PORT}`);
+console.log('Environment variables:');
+console.log(`PORT: ${process.env.PORT || 'not set'}`);
 console.log(`SUPABASE_URL: ${process.env.SUPABASE_URL ? 'SET' : 'NOT SET'}`);
 console.log(`SUPABASE_API_KEY: ${process.env.SUPABASE_API_KEY ? 'SET' : 'NOT SET'}`);
 console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? 'SET' : 'NOT SET'}`);
 
-// Configure CORS properly — single call
+// Setup CORS middleware correctly (only once)
 app.use(cors({
-  origin: 'https://amit-zeta.vercel.app',  // Your frontend URL
+  origin: 'https://amit-zeta.vercel.app', // Your frontend domain
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Handle CORS preflight requests explicitly
+// Enable OPTIONS preflight requests for all routes
 app.options('*', cors());
 
-// Body parser middleware for JSON
+// Middleware to parse JSON bodies
 app.use(express.json());
 
 // Initialize Supabase client
@@ -44,13 +41,10 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  if (!token) {
-    return res.status(401).json({ error: 'Access token required' });
-  }
+  if (!token) return res.status(401).json({ error: 'Access token required' });
+
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: 'Invalid or expired token' });
-    }
+    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
     req.user = user;
     next();
   });
@@ -76,6 +70,17 @@ const generateMarketingStats = () => {
     totalReviews
   };
 };
+
+// Example health check route (replace with your own if needed)
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Backend server is running' });
+});
+
+// Start server listening
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
 
 // Helper function to generate fake withdrawals for popup
 const generateFakeWithdrawal = () => {
