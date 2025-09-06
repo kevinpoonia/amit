@@ -3,7 +3,7 @@ import axios from "axios";
 import "./RechargeForm.css";
 import qrCodeImage from "../assets/qr-code.png";
 
-// Use environment variable for API base
+// Use environment variable for API base here
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "https://investmentpro-nu7s.onrender.com";
 
