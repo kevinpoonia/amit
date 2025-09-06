@@ -29,7 +29,7 @@ const authenticateAdmin = async (req, res, next) => {
   }
 };
 
-// Get pending recharges
+// GET pending recharges
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
   try {
     const { data: recharges, error } = await supabase
@@ -48,22 +48,23 @@ app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
 
     if (error) throw error;
 
-    const formattedRecharges = recharges.map(r => ({
+    const formatted = recharges.map(r => ({
       ...r,
       user_name: r.users?.name || 'Unknown',
       user_email: r.users?.email || 'Unknown'
     }));
 
-    res.json({ recharges: formattedRecharges });
+    res.json({ recharges: formatted });
   } catch (error) {
-    console.error('Pending recharges fetch error:', error);
+    console.error('Error fetching pending recharges:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Approve recharge
+// POST approve recharge
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
   const rechargeId = req.params.id;
+  const adminId = req.user.id;
 
   try {
     const { data: recharge, error: fetchError } = await supabase
@@ -73,9 +74,9 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
       .single();
 
     if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found' });
-    if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge not pending' });
+    if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge request not pending' });
 
-    // Increment withdrawable wallet via RPC
+    // Atomically increment withdrawable wallet
     const { error: incError } = await supabase.rpc('increment_user_withdrawable_wallet', {
       user_id: recharge.user_id,
       amount: recharge.amount
@@ -90,16 +91,15 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
       .eq('status', 'pending');
 
     if (statusError) {
-      // Rollback wallet increment
+      // Rollback wallet increment on failure
       await supabase.rpc('decrement_user_withdrawable_wallet', {
         user_id: recharge.user_id,
         amount: recharge.amount
       });
       throw statusError;
     }
-
     if (count === 0) {
-      // Rollback wallet increment - already processed
+      // Rollback if no row updated
       await supabase.rpc('decrement_user_withdrawable_wallet', {
         user_id: recharge.user_id,
         amount: recharge.amount
@@ -114,7 +114,7 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
   }
 });
 
-// Reject recharge
+// POST reject recharge
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
   const rechargeId = req.params.id;
 
@@ -126,7 +126,7 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
       .single();
 
     if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found' });
-    if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge not pending' });
+    if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge request not pending' });
 
     const { error: statusError, count } = await supabase
       .from('recharges')
@@ -144,7 +144,7 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
   }
 });
 
-// Get pending withdrawals
+// GET pending withdrawals
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
   try {
     const { data: withdrawals, error } = await supabase
@@ -166,20 +166,20 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
 
     if (error) throw error;
 
-    const formattedWithdrawals = withdrawals.map(w => ({
+    const formatted = withdrawals.map(w => ({
       ...w,
       user_name: w.users?.name || 'Unknown',
       user_email: w.users?.email || 'Unknown'
     }));
 
-    res.json({ withdrawals: formattedWithdrawals });
+    res.json({ withdrawals: formatted });
   } catch (error) {
     console.error('Withdrawals fetch error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Approve withdrawal
+// POST approve withdrawal
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
   const withdrawalId = req.params.id;
 
@@ -191,9 +191,8 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
       .single();
 
     if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
-    if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal not pending' });
+    if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal request not pending' });
 
-    // Decrement withdrawable wallet via RPC
     const { data: userData, error: rpcError } = await supabase.rpc('decrement_user_withdrawable_wallet', {
       user_id: withdrawal.user_id,
       amount: withdrawal.amount
@@ -201,7 +200,6 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
 
     if (rpcError) return res.status(400).json({ error: 'Insufficient balance or user not found' });
 
-    // Update withdrawal status
     const { error: statusError, count } = await supabase
       .from('withdrawals')
       .update({ status: 'approved', processed_date: new Date().toISOString() })
@@ -209,7 +207,6 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
       .eq('status', 'pending');
 
     if (statusError) {
-      // Rollback decrement
       await supabase.rpc('increment_user_withdrawable_wallet', {
         user_id: withdrawal.user_id,
         amount: withdrawal.amount
@@ -232,7 +229,7 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
   }
 });
 
-// Reject withdrawal
+// POST reject withdrawal
 app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res) => {
   const withdrawalId = req.params.id;
 
@@ -244,9 +241,8 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
       .single();
 
     if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found' });
-    if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal not pending' });
+    if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal request not pending' });
 
-    // Fetch user balance to refund
     const { data: userData, error: userError } = await supabase
       .from('users')
       .select('balance')
@@ -267,7 +263,6 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
       return res.status(500).json({ error: 'Failed to refund user balance' });
     }
 
-    // Update withdrawal status to rejected
     const { error: statusError, count } = await supabase
       .from('withdrawals')
       .update({ status: 'rejected', processed_date: new Date().toISOString() })
@@ -284,10 +279,10 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
   }
 });
 
-// User search
+// GET user search
 app.get('/api/admin/users/search', authenticateAdmin, async (req, res) => {
   const query = req.query.query;
-  if (!query || query.length < 3) return res.status(400).json({ error: 'Search query must be at least 3 characters long' });
+  if (!query || query.length < 3) return res.status(400).json({ error: 'Search query must be min 3 characters' });
 
   try {
     const { data: users, error } = await supabase
@@ -304,9 +299,10 @@ app.get('/api/admin/users/search', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Get user details by admin
+// GET user details
 app.get('/api/admin/user/:id', authenticateAdmin, async (req, res) => {
   const userId = req.params.id;
+
   try {
     const { data: user, error } = await supabase
       .from('users')
@@ -315,7 +311,6 @@ app.get('/api/admin/user/:id', authenticateAdmin, async (req, res) => {
       .single();
 
     if (error || !user) return res.status(404).json({ error: 'User not found' });
-
     res.json({ user });
   } catch (error) {
     console.error('User details fetch error:', error);
@@ -323,12 +318,13 @@ app.get('/api/admin/user/:id', authenticateAdmin, async (req, res) => {
   }
 });
 
-// Adjust user balance by admin
+// POST adjust user balance
 app.post('/api/admin/user/balance-adjust', authenticateAdmin, async (req, res) => {
   const { user_id, amount, reason } = req.body;
   const adminId = req.user.id;
 
-  if (!user_id || isNaN(amount) || !reason) return res.status(400).json({ error: 'User ID, amount, and reason are required' });
+  if (!user_id || isNaN(amount) || !reason)
+    return res.status(400).json({ error: 'User ID, amount, and reason are required' });
 
   try {
     const { data: user, error: userError } = await supabase
@@ -338,8 +334,9 @@ app.post('/api/admin/user/balance-adjust', authenticateAdmin, async (req, res) =
       .single();
     if (userError || !user) return res.status(404).json({ error: 'User not found' });
 
-    let updateError;
     const adjustmentAmount = parseFloat(amount);
+    let updateError;
+
     if (adjustmentAmount >= 0) {
       updateError = await supabase.rpc('increment_user_withdrawable_wallet', {
         user_id,
@@ -352,6 +349,7 @@ app.post('/api/admin/user/balance-adjust', authenticateAdmin, async (req, res) =
       });
       updateError = result.error;
     }
+
     if (updateError) {
       console.error('Balance update error:', updateError);
       return res.status(500).json({ error: 'Failed to update user balance' });
@@ -366,6 +364,7 @@ app.post('/api/admin/user/balance-adjust', authenticateAdmin, async (req, res) =
         admin_id: adminId,
         adjustment_date: new Date().toISOString()
       });
+
     if (recordError) {
       // Rollback balance update
       if (adjustmentAmount >= 0) {
@@ -389,7 +388,7 @@ app.post('/api/admin/user/balance-adjust', authenticateAdmin, async (req, res) =
   }
 });
 
-// Manual daily plan recycling
+// POST manual daily plan recycling
 app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
   try {
     const { data: investments, error: investError } = await supabase
@@ -398,10 +397,10 @@ app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
       .eq('status', 'active');
     if (investError) throw investError;
 
-    const { data: plans, error: plansError } = await supabase
+    const { data: plans, error: planError } = await supabase
       .from('product_plans')
       .select('id, daily_income');
-    if (plansError) throw plansError;
+    if (planError) throw planError;
 
     const planIncomeMap = {};
     plans.forEach(plan => (planIncomeMap[plan.id] = plan.daily_income));
@@ -412,13 +411,13 @@ app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
     for (const inv of investments) {
       if (inv.days_left > 0) {
         const dailyIncome = planIncomeMap[inv.plan_id];
-        if (dailyIncome > 0) {
+        if (dailyIncome && dailyIncome > 0) {
           const { error: incrErr } = await supabase.rpc('increment_user_product_revenue_wallet', {
             user_id: inv.user_id,
             amount: dailyIncome
           });
           if (incrErr) {
-            console.error(`Failed to add revenue wallet for user ${inv.user_id}:`, incrErr);
+            console.error(`Failed updating product revenue wallet for user ${inv.user_id}:`, incrErr);
             continue;
           }
 
@@ -426,7 +425,7 @@ app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
             .from('daily_profits')
             .insert({ user_id: inv.user_id, investment_id: inv.id, amount: dailyIncome, processed_date: new Date().toISOString() });
           if (insertErr) {
-            console.error(`Failed to record daily profit for user ${inv.user_id}:`, insertErr);
+            console.error(`Failed recording daily profit for user ${inv.user_id}:`, insertErr);
             continue;
           }
 
@@ -435,7 +434,7 @@ app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
             .update({ days_left: inv.days_left - 1 })
             .eq('id', inv.id);
           if (updateInvErr) {
-            console.error(`Failed to update investment ${inv.id}:`, updateInvErr);
+            console.error(`Failed updating investment ${inv.id}:`, updateInvErr);
             continue;
           }
 
@@ -445,7 +444,7 @@ app.post('/api/admin/daily-recycle', authenticateAdmin, async (req, res) => {
       }
     }
 
-    res.json({ message: 'Daily plan recycling completed successfully', processedCount, totalDistributed });
+    res.json({ message: 'Daily plan recycling completed', processedCount, totalDistributed });
   } catch (error) {
     console.error('Daily plan recycling error:', error);
     res.status(500).json({ error: 'Internal server error' });
