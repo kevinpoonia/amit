@@ -22,7 +22,7 @@ console.log(`JWT_SECRET: ${process.env.JWT_SECRET ? 'SET' : 'NOT SET'}`);
 
 // Add CORS middleware here to allow frontend domain access
 app.use(cors({
-  origin: 'https://investmentproplus.netlify.app',  // Your frontend URL, NOT your backend URL
+  origin: 'https://amit-zeta.vercel.app',  // Your frontend URL, NOT your backend URL
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
