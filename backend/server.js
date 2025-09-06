@@ -154,7 +154,7 @@ app.post('/api/register', async (req, res) => {
       .insert([
         {
           name: username,
-          email: `${mobile}@investpro.com`, // Generate email from mobile
+          email: `${mobile}@investmentplus.com`, // Generate email from mobile
           password, // In a real app, you should hash the password
           mobile,
           balance: 0,
@@ -261,7 +261,7 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     // Fetch user data from Supabase
     const { data: user, error } = await supabase
       .from('users')
-      .select('id, name, email, mobile, product_revenue_wallet, withdrawable_wallet, is_admin')
+      .select('id, name, email, mobile, balance, recharge_balance, product_revenue_wallet, withdrawable_wallet, is_admin')
       .eq('id', req.user.id)
       .single();
 
