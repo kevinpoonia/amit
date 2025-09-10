@@ -125,18 +125,19 @@ app.post('/api/register', async (req, res) => {
 
         let referredById = null;
         if (referralCode && referralCode.trim() !== '') {
-            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode).single();
-            if (referrer) referredById = referrer.id;
+            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
+            if (!referrer) { return res.status(400).json({ error: 'Invalid referral code provided.' }); }
+            referredById = referrer.id;
         }
 
         const { data: newUser, error } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
         if (error) throw error;
         
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({ message: 'User registered', token });
+        res.status(201).json({ message: 'User registered successfully', token });
     } catch (error) {
         console.error('Register Error:', error);
-        res.status(500).json({ error: 'Server error during registration' });
+        res.status(500).json({ error: 'An error occurred during registration.' });
     }
 });
 
@@ -157,7 +158,7 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('id, name, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url').eq('id', req.user.id).single();
+        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url').eq('id', req.user.id).single();
         if (error) return res.status(404).json({ error: 'User not found for this session.' });
         res.json({ user });
     } catch (error) {
@@ -179,10 +180,18 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
     const { amount, utr } = req.body;
     if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
     try {
-        const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr, request_date: new Date().toISOString() }]);
+        // UTR Uniqueness Check
+        const { data: existingRecharge, error: checkError } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
+        if(checkError) throw checkError;
+        if(existingRecharge && existingRecharge.length > 0) {
+            return res.status(400).json({ error: 'This transaction ID has already been used for a successful recharge.' });
+        }
+
+        const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim(), request_date: new Date().toISOString() }]);
         if (error) throw error;
         res.json({ message: 'Recharge request submitted.' });
     } catch (error) {
+        console.error("Recharge error:", error);
         res.status(500).json({ error: 'Failed to submit recharge.' });
     }
 });
@@ -303,6 +312,12 @@ async function runGameCycle() {
         } else {
             nextPeriod = Number(yyyymmdd + "0001");
         }
+      // Bet History Cleanup Logic
+        if ((gameState.current_period - 1) % 50 === 0 && gameState.current_period > 1) {
+            const periodToDelete = gameState.current_period - 50;
+            console.log(`Clearing bets for old period: ${periodToDelete}`);
+            await supabase.from('bets').delete().eq('game_period', periodToDelete);
+        }
 
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
         if (betsError) { console.error("Error fetching bets:", betsError); return; }
@@ -417,9 +432,7 @@ app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
         const { data, error } = await supabase.from('recharges').select('*').eq('status', 'pending').order('request_date', { ascending: true });
         if (error) throw error;
         res.json({ recharges: data });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch pending deposits.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to fetch pending deposits.' }); }
 });
 
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
@@ -427,9 +440,7 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
         const { data, error } = await supabase.from('withdrawals').select('*').eq('status', 'pending').order('request_date', { ascending: true });
         if (error) throw error;
         res.json({ withdrawals: data });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch pending withdrawals.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
 
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
@@ -441,43 +452,31 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Deposit approved successfully.' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to approve deposit.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to approve deposit.' }); }
 });
 
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
-        await supabase.from('recharges').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
+        await supabase.from('recharges').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', req.params.id);
         res.json({ message: 'Deposit rejected successfully.' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to reject deposit.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to reject deposit.' }); }
 });
 
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
-        await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
+        await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', req.params.id);
         res.json({ message: 'Withdrawal approved successfully.' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to approve withdrawal.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to approve withdrawal.' }); }
 });
 
 app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res) => {
     try {
-        const { id } = req.params;
-        const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
+        const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', req.params.id).single();
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.'});
-        
         await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
-        await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
+        await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', req.params.id);
         res.json({ message: 'Withdrawal rejected and refunded successfully.' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to reject withdrawal.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to reject withdrawal.' }); }
 });
 
 app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
