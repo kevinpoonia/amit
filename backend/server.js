@@ -72,20 +72,58 @@ const generateIpUsername = (username) => {
     return `${namePart}@${username.length}`;
 };
 
+// --- USER-FACING API ENDPOINTS ---
+app.post('/api/register', async (req, res) => {
+    const { username, mobile, password, referralCode } = req.body;
+    if (!username || !mobile || !password) { return res.status(400).json({ error: 'Missing required fields' }); }
+    try {
+        const ip_username = generateIpUsername(username);
+        const { data: existingUser, error: existingUserError } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`).limit(1);
+        if(existingUserError) throw existingUserError;
+        if (existingUser && existingUser.length > 0) { return res.status(400).json({ error: 'User with this mobile or username format already exists' }); }
+
+        let referredById = null;
+        if (referralCode && referralCode.trim() !== '') {
+            const { data: referrer, error: referrerError } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
+            if (referrerError && referrerError.code !== 'PGRST116') { // PGRST116 means no rows found, which is an expected case
+                throw referrerError;
+            }
+            if (!referrer) {
+                return res.status(400).json({ error: 'Invalid referral code provided.' });
+            }
+            referredById = referrer.id;
+        }
+
+        const { data: newUser, error: insertError } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
+        if (insertError) throw insertError;
+        
+        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.status(201).json({ message: 'User registered successfully', token });
+    } catch (error) {
+        console.error('Register Error:', error);
+        res.status(500).json({ error: 'An error occurred during registration.' });
+    }
+});
+
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
 
 app.post('/api/register', async (req, res) => {
-    const { username, mobile, password } = req.body;
+    const { username, mobile, password, referralCode } = req.body;
     if (!username || !mobile || !password) { return res.status(400).json({ error: 'Missing required fields' }); }
-    if (!/^\d{10}$/.test(mobile)) { return res.status(400).json({ error: 'Mobile number must be 10 digits' }); }
     try {
         const ip_username = generateIpUsername(username);
-        const { data: existingUser } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`);
+        const { data: existingUser } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`).limit(1);
         if (existingUser && existingUser.length > 0) { return res.status(400).json({ error: 'User with this mobile or username format already exists' }); }
 
-        const { data: newUser, error } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, email: `${mobile}@example.com`, balance: 50 }]).select().single();
+        let referredById = null;
+        if (referralCode && referralCode.trim() !== '') {
+            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode).single();
+            if (referrer) referredById = referrer.id;
+        }
+
+        const { data: newUser, error } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
         if (error) throw error;
         
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
@@ -114,7 +152,7 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
         const { data: user, error } = await supabase.from('users').select('id, name, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url').eq('id', req.user.id).single();
-        if (error) throw error;
+        if (error) return res.status(404).json({ error: 'User not found for this session.' });
         res.json({ user });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch user data' });
@@ -124,8 +162,7 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
         const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
-        if (error) throw error;
-        // In a real app, these would be calculated more complexly
+        if (error) return res.status(404).json({ error: 'User not found for this session.' });
         res.json({ balance: user.balance, withdrawable_wallet: user.withdrawable_wallet, todaysIncome: 0, totalIncome: 0, teamIncome: 0 });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch financial summary' });
@@ -148,7 +185,8 @@ app.post('/api/withdraw', authenticateToken, async (req, res) => {
     const { amount, method, details } = req.body;
     if (!amount || amount < 100 || !method || !details) { return res.status(400).json({ error: 'Invalid withdrawal details.' }); }
     try {
-        const { data: user } = await supabase.from('users').select('withdrawable_wallet').eq('id', req.user.id).single();
+        const { data: user, error: userError } = await supabase.from('users').select('withdrawable_wallet').eq('id', req.user.id).single();
+        if (userError || !user) { return res.status(404).json({ error: 'User not found.' }); }
         if (user.withdrawable_wallet < amount) { return res.status(400).json({ error: 'Insufficient balance.' }); }
         
         await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: req.user.id, p_amount: amount });
@@ -353,10 +391,23 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
 // ==========================================
 
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
-    try { const { data, error } = await supabase.from('recharges').select('*').eq('status', 'pending').order('request_date', { ascending: true }); if (error) throw error; res.json({ recharges: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch pending deposits.' }); }
+    try {
+        const { data, error } = await supabase.from('recharges').select('*').eq('status', 'pending').order('request_date', { ascending: true });
+        if (error) throw error;
+        res.json({ recharges: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch pending deposits.' });
+    }
 });
+
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
-    try { const { data, error } = await supabase.from('withdrawals').select('*').eq('status', 'pending').order('request_date', { ascending: true }); if (error) throw error; res.json({ withdrawals: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
+    try {
+        const { data, error } = await supabase.from('withdrawals').select('*').eq('status', 'pending').order('request_date', { ascending: true });
+        if (error) throw error;
+        res.json({ withdrawals: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch pending withdrawals.' });
+    }
 });
 
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
@@ -368,31 +419,43 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Deposit approved successfully.' });
-    } catch (err) { res.status(500).json({ error: 'Failed to approve deposit.' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to approve deposit.' });
+    }
 });
 
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
     try {
-        await supabase.from('recharges').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', req.params.id);
+        const { id } = req.params;
+        await supabase.from('recharges').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Deposit rejected successfully.' });
-    } catch (err) { res.status(500).json({ error: 'Failed to reject deposit.' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reject deposit.' });
+    }
 });
 
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
     try {
-        await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', req.params.id);
+        const { id } = req.params;
+        await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Withdrawal approved successfully.' });
-    } catch (err) { res.status(500).json({ error: 'Failed to approve withdrawal.' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to approve withdrawal.' });
+    }
 });
 
 app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res) => {
     try {
-        const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', req.params.id).single();
+        const { id } = req.params;
+        const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.'});
+        
         await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
-        await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', req.params.id);
+        await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Withdrawal rejected and refunded successfully.' });
-    } catch (err) { res.status(500).json({ error: 'Failed to reject withdrawal.' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reject withdrawal.' });
+    }
 });
 
 app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
