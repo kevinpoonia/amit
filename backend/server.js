@@ -283,46 +283,52 @@ async function runGameCycle() {
         
         let nextPeriod;
         if (lastDatePart === yyyymmdd) {
-            nextPeriod = gameState.current_period + 1;
+            nextPeriod = Number(gameState.current_period) + 1;
         } else {
             nextPeriod = Number(yyyymmdd + "0001");
         }
 
-        const { data: bets } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
+        const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
+        if (betsError) { console.error("Error fetching bets:", betsError); return; }
+
         let winningNumber;
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
         } else {
-            const totalPayouts = Array(10).fill(0);
-            let totalBetAmount = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
-            for (let i = 0; i < 10; i++) {
-                const potentialColors = getNumberProperties(i);
-                bets.forEach(bet => {
-                    if (bet.bet_on == i.toString()) totalPayouts[i] += parseFloat(bet.amount) * 9.2;
-                    if (potentialColors.includes(bet.bet_on)) {
-                        totalPayouts[i] += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
-                    }
-                });
-            }
-            
-            let minPayout = Infinity;
-            let potentialWinners = [];
-            for (let i = 0; i < 10; i++) {
-                if (totalPayouts[i] <= totalBetAmount * 0.9) {
-                     if (totalPayouts[i] < minPayout) {
-                        minPayout = totalPayouts[i];
-                        potentialWinners = [i];
-                    } else if (totalPayouts[i] === minPayout) {
-                        potentialWinners.push(i);
+            if (!bets || bets.length === 0) {
+                winningNumber = Math.floor(Math.random() * 10);
+            } else {
+                const totalPayouts = Array(10).fill(0);
+                let totalBetAmount = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
+                for (let i = 0; i < 10; i++) {
+                    const potentialColors = getNumberProperties(i);
+                    bets.forEach(bet => {
+                        if (bet.bet_on == i.toString()) totalPayouts[i] += parseFloat(bet.amount) * 9.2;
+                        if (potentialColors.includes(bet.bet_on)) {
+                            totalPayouts[i] += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
+                        }
+                    });
+                }
+                
+                let minPayout = Infinity;
+                let potentialWinners = [];
+                for (let i = 0; i < 10; i++) {
+                    if (totalPayouts[i] <= totalBetAmount * 0.9) {
+                         if (totalPayouts[i] < minPayout) {
+                            minPayout = totalPayouts[i];
+                            potentialWinners = [i];
+                        } else if (totalPayouts[i] === minPayout) {
+                            potentialWinners.push(i);
+                        }
                     }
                 }
-            }
-            if (potentialWinners.length > 0) {
-                winningNumber = potentialWinners[Math.floor(Math.random() * potentialWinners.length)];
-            } else {
-                minPayout = Math.min(...totalPayouts);
-                const lowestLossNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
-                winningNumber = lowestLossNumbers.length > 0 ? lowestLossNumbers[Math.floor(Math.random() * lowestLossNumbers.length)] : Math.floor(Math.random() * 10);
+                if (potentialWinners.length > 0) {
+                    winningNumber = potentialWinners[Math.floor(Math.random() * potentialWinners.length)];
+                } else {
+                    minPayout = Math.min(...totalPayouts);
+                    const lowestLossNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
+                    winningNumber = lowestLossNumbers.length > 0 ? lowestLossNumbers[Math.floor(Math.random() * lowestLossNumbers.length)] : Math.floor(Math.random() * 10);
+                }
             }
         }
 
