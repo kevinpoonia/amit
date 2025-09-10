@@ -14,14 +14,8 @@ const PORT = process.env.PORT || 10000;
 console.log(`Attempting to start server on port: ${PORT}`);
 
 // Middleware
-// CRITICAL FIX: Specific CORS configuration to allow your Vercel frontend
-const corsOptions = {
-  origin: 'https://amit-sigma.vercel.app',
-  optionsSuccessStatus: 200 // For legacy browser support
-};
-app.use(cors(corsOptions));
+app.use(cors({ origin: 'https://amit-sigma.vercel.app' }));
 app.use(express.json());
-
 
 // Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
@@ -33,13 +27,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Access token required' });
-    }
+    if (!token) return res.status(401).json({ error: 'Access token required' });
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: 'Invalid or expired token' });
-        }
+        if (err) return res.status(403).json({ error: 'Invalid or expired token' });
         req.user = user;
         next();
     });
@@ -48,16 +38,14 @@ const authenticateToken = (req, res, next) => {
 const authenticateAdmin = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-    if (!token) {
-        return res.status(401).json({ error: 'Access token required' });
-    }
+    if (!token) return res.status(401).json({ error: 'Access token required' });
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const { data: user, error } = await supabase.from('users').select('is_admin').eq('id', decoded.id).single();
         if (error || !user || !user.is_admin) {
             return res.status(403).json({ error: 'Admin access required' });
         }
-        req.user = decoded; // Attach user info to the request
+        req.user = decoded;
         next();
     } catch (err) {
         return res.status(403).json({ error: 'Invalid or expired token' });
@@ -69,16 +57,17 @@ const authenticateAdmin = async (req, res, next) => {
 // ==========================================
 
 const generateIpUsername = (username) => {
-    let namePart = username.replace(/[^a-zA-Z0-9]/g, '');
+    let namePart = username.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6);
     if (namePart.length < 6) {
-        namePart = namePart.padEnd(6, '123456'.substring(namePart.length));
-    } else {
-        namePart = namePart.substring(0, 6);
+        namePart = namePart.padEnd(6, '123');
     }
     return `${namePart}@${username.length}`;
 };
 
-// --- USER-FACING API ENDPOINTS ---
+// ==========================================
+// ========== USER-FACING API ENDPOINTS =====
+// ==========================================
+
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
     if (!username || !mobile || !password) { return res.status(400).json({ error: 'Missing required fields' }); }
@@ -91,47 +80,13 @@ app.post('/api/register', async (req, res) => {
         let referredById = null;
         if (referralCode && referralCode.trim() !== '') {
             const { data: referrer, error: referrerError } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
-            if (referrerError && referrerError.code !== 'PGRST116') { // PGRST116 means no rows found, which is an expected case
-                throw referrerError;
-            }
-            if (!referrer) {
-                return res.status(400).json({ error: 'Invalid referral code provided.' });
-            }
+            if (referrerError && referrerError.code !== 'PGRST116') { throw referrerError; }
+            if (!referrer) { return res.status(400).json({ error: 'Invalid referral code provided.' }); }
             referredById = referrer.id;
         }
 
         const { data: newUser, error: insertError } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
         if (insertError) throw insertError;
-        
-        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({ message: 'User registered successfully', token });
-    } catch (error) {
-        console.error('Register Error:', error);
-        res.status(500).json({ error: 'An error occurred during registration.' });
-    }
-});
-
-// ==========================================
-// ========== USER-FACING API ENDPOINTS =====
-// ==========================================
-
-app.post('/api/register', async (req, res) => {
-    const { username, mobile, password, referralCode } = req.body;
-    if (!username || !mobile || !password) { return res.status(400).json({ error: 'Missing required fields' }); }
-    try {
-        const ip_username = generateIpUsername(username);
-        const { data: existingUser } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`).limit(1);
-        if (existingUser && existingUser.length > 0) { return res.status(400).json({ error: 'User with this mobile or username format already exists' }); }
-
-        let referredById = null;
-        if (referralCode && referralCode.trim() !== '') {
-            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
-            if (!referrer) { return res.status(400).json({ error: 'Invalid referral code provided.' }); }
-            referredById = referrer.id;
-        }
-
-        const { data: newUser, error } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
-        if (error) throw error;
         
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: 'User registered successfully', token });
@@ -180,13 +135,10 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
     const { amount, utr } = req.body;
     if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
     try {
-        // UTR Uniqueness Check
-        const { data: existingRecharge, error: checkError } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
-        if(checkError) throw checkError;
+        const { data: existingRecharge } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
         if(existingRecharge && existingRecharge.length > 0) {
             return res.status(400).json({ error: 'This transaction ID has already been used for a successful recharge.' });
         }
-
         const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim(), request_date: new Date().toISOString() }]);
         if (error) throw error;
         res.json({ message: 'Recharge request submitted.' });
@@ -219,7 +171,7 @@ app.post('/api/withdraw', authenticateToken, async (req, res) => {
 
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('investments').select('*').eq('user_id', req.user.id);
+        const { data, error } = await supabase.from('investments').select('*, product_plans(*)').eq('user_id', req.user.id);
         if (error) throw error;
         res.json({ investments: data });
     } catch (error) {
@@ -268,8 +220,8 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
         const referredUsers = referredUsersData.map(u => ({...u, bonusEarned: bonusMap[u.id] || 0 }));
         
         res.json({
-            referralLink: `https://YOUR_FRONTEND_URL/register?ref=${user.ip_username}`,
-            activeReferrals: 0, // Placeholder logic
+            referralLink: `https://amit-sigma.vercel.app/?ref=${user.ip_username}`,
+            activeReferrals: 0, // Placeholder
             referredUsers: referredUsers,
             totalRewards: Object.values(bonusMap).reduce((sum, val) => sum + val, 0)
         });
@@ -278,6 +230,31 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
     }
 });
 
+app.get('/api/product-plans', authenticateToken, async (req, res) => {
+    const plans = [
+        { id: 101, name: 'Quantum Leap X1', category: 'new', price: 5000, dailyIncome: 250, totalReturn: 7500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 2).toISOString() },
+        { id: 102, name: 'Solaris Prime', category: 'new', price: 10000, dailyIncome: 550, totalReturn: 16500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 5).toISOString() },
+        { id: 103, name: 'Nebula Starter', category: 'new', price: 2500, dailyIncome: 120, totalReturn: 3600, durationDays: 30 },
+        { id: 104, name: 'Orion Fund', category: 'new', price: 7500, dailyIncome: 380, totalReturn: 11400, durationDays: 30 },
+        { id: 105, name: 'Galaxy Pilot', category: 'new', price: 15000, dailyIncome: 800, totalReturn: 24000, durationDays: 30 },
+        { id: 201, name: 'Bronze Tier', category: 'primary', price: 490, dailyIncome: 80, totalReturn: 720, durationDays: 9 },
+        { id: 202, name: 'Silver Tier', category: 'primary', price: 750, dailyIncome: 85, totalReturn: 1190, durationDays: 14 },
+        { id: 203, name: 'Gold Tier', category: 'primary', price: 1500, dailyIncome: 180, totalReturn: 2700, durationDays: 15 },
+        { id: 204, name: 'Platinum Tier', category: 'primary', price: 3000, dailyIncome: 375, totalReturn: 5625, durationDays: 15 },
+        { id: 205, name: 'Diamond Tier', category: 'primary', price: 5000, dailyIncome: 650, totalReturn: 9750, durationDays: 15 },
+        { id: 301, name: 'VIP Bronze', category: 'vip', price: 10000, dailyIncome: 1350, totalReturn: 20250, durationDays: 15 },
+        { id: 302, name: 'VIP Silver', category: 'vip', price: 20000, dailyIncome: 2800, totalReturn: 42000, durationDays: 15 },
+        { id: 303, name: 'VIP Gold', category: 'vip', price: 50000, dailyIncome: 7500, totalReturn: 112500, durationDays: 15 },
+        { id: 304, name: 'VIP Platinum', category: 'vip', price: 80000, dailyIncome: 12800, totalReturn: 192000, durationDays: 15 },
+        { id: 305, name: 'VIP Diamond', category: 'vip', price: 100000, dailyIncome: 17000, totalReturn: 255000, durationDays: 15 },
+        { id: 401, name: 'Luxury Sapphire', category: 'luxury', price: 150000, dailyIncome: 27000, totalReturn: 405000, durationDays: 15 },
+        { id: 402, name: 'Luxury Ruby', category: 'luxury', price: 200000, dailyIncome: 38000, totalReturn: 570000, durationDays: 15 },
+        { id: 403, name: 'Luxury Emerald', category: 'luxury', price: 300000, dailyIncome: 60000, totalReturn: 900000, durationDays: 15 },
+        { id: 404, name: 'Luxury Onyx', category: 'luxury', price: 500000, dailyIncome: 110000, totalReturn: 1650000, durationDays: 15 },
+        { id: 405, name: 'Luxury Pearl', category: 'luxury', price: 1000000, dailyIncome: 250000, totalReturn: 3750000, durationDays: 15 }
+    ];
+    res.json({ plans });
+});
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
@@ -285,7 +262,6 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
 
-// CRITICAL FIX: Added explicit 'return colors;'
 const getNumberProperties = (num) => {
     const colors = [];
     if ([1, 3, 7, 9].includes(num)) colors.push('Red');
@@ -296,6 +272,7 @@ const getNumberProperties = (num) => {
     }
     return colors;
 };
+
 async function runGameCycle() {
     try {
         const { data: gameState, error } = await supabase.from('game_state').select('*').single();
@@ -312,10 +289,9 @@ async function runGameCycle() {
         } else {
             nextPeriod = Number(yyyymmdd + "0001");
         }
-      // Bet History Cleanup Logic
+
         if ((gameState.current_period - 1) % 50 === 0 && gameState.current_period > 1) {
             const periodToDelete = gameState.current_period - 50;
-            console.log(`Clearing bets for old period: ${periodToDelete}`);
             await supabase.from('bets').delete().eq('game_period', periodToDelete);
         }
 
@@ -479,55 +455,17 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     } catch (err) { res.status(500).json({ error: 'Failed to reject withdrawal.' }); }
 });
 
-app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    try { const { data, error } = await supabase.from('game_state').select('*').single(); if (error) throw error; res.json({ status: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch game status.' }); }
-});
-
-app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    const { is_on, mode } = req.body;
-    const updateData = {};
-    if (typeof is_on === 'boolean') updateData.is_on = is_on;
-    if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
-    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
-    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Game status updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update game status.' }); }
-});
-
-app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => {
-    const { maintenance_mode, whitelisted_users } = req.body;
-    const updateData = {};
-    if (typeof maintenance_mode === 'boolean') updateData.maintenance_mode = maintenance_mode;
-    if (Array.isArray(whitelisted_users)) updateData.whitelisted_users = whitelisted_users.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
-    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid data provided.' });
-    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Maintenance settings updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update maintenance settings.' }); }
-});
-
-app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
-    try { await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); res.json({ message: 'Next result set.' }); } catch(err) { res.status(500).json({ error: 'Failed to set next result.' }); }
-});
-
-app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: gameState } = await supabase.from('game_state').select('current_period').single();
-        const { data: bets } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
-        const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
-        bets.forEach(bet => { if (summary.hasOwnProperty(bet.bet_on)) summary[bet.bet_on] += parseFloat(bet.amount); });
-        res.json({ summary });
-    } catch (err) { res.status(500).json({ error: 'Failed to fetch current bets.' }); }
-});
-
 app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, res) => {
     try {
-        const { data: activeInvestments, error } = await supabase
-            .from('investments')
-            .select('user_id, product_plans(daily_income)')
-            .eq('status', 'active');
+        const { data: activeInvestments, error } = await supabase.from('investments').select('user_id, product_plans(daily_income)').eq('status', 'active');
         if (error) throw error;
-
         for (const investment of activeInvestments) {
-            await supabase.rpc('increment_user_withdrawable_wallet', { 
-                p_user_id: investment.user_id, 
-                p_amount: investment.product_plans.daily_income 
-            });
+            if (investment.product_plans) {
+                 await supabase.rpc('increment_user_withdrawable_wallet', { 
+                    p_user_id: investment.user_id, 
+                    p_amount: investment.product_plans.daily_income 
+                });
+            }
         }
         res.json({ message: `Daily income distributed to ${activeInvestments.length} investments.` });
     } catch (err) {
@@ -537,19 +475,15 @@ app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, re
 
 app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     const { amount, reason, user_ids } = req.body;
-    if (!amount || amount <= 0 || !reason) {
-        return res.status(400).json({ error: 'Amount and reason are required.' });
-    }
+    if (!amount || amount <= 0 || !reason) { return res.status(400).json({ error: 'Amount and reason are required.' }); }
     try {
         let targetUsers = [];
         if (user_ids && user_ids.length > 0) {
             targetUsers = user_ids;
         } else {
-            const { data: allUsers, error } = await supabase.from('users').select('id');
-            if (error) throw error;
+            const { data: allUsers } = await supabase.from('users').select('id');
             targetUsers = allUsers.map(u => u.id);
         }
-
         for (const userId of targetUsers) {
             await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: userId, p_amount: amount });
             await supabase.from('balance_adjustments').insert([{ user_id: userId, amount, reason, admin_id: req.user.id }]);
@@ -560,6 +494,37 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     }
 });
 
+app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => { 
+    try { const { data, error } = await supabase.from('game_state').select('*').single(); if (error) throw error; res.json({ status: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch game status.' }); }
+});
+app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => { 
+    const { is_on, mode } = req.body;
+    const updateData = {};
+    if (typeof is_on === 'boolean') updateData.is_on = is_on;
+    if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
+    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
+    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Game status updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update game status.' }); }
+});
+app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => { 
+    const { maintenance_mode, whitelisted_users } = req.body;
+    const updateData = {};
+    if (typeof maintenance_mode === 'boolean') updateData.maintenance_mode = maintenance_mode;
+    if (Array.isArray(whitelisted_users)) updateData.whitelisted_users = whitelisted_users.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
+    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid data provided.' });
+    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Maintenance settings updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update maintenance settings.' }); }
+});
+app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => { 
+    try { await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); res.json({ message: 'Next result set.' }); } catch(err) { res.status(500).json({ error: 'Failed to set next result.' }); }
+});
+app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => { 
+    try {
+        const { data: gameState } = await supabase.from('game_state').select('current_period').single();
+        const { data: bets } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
+        const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
+        bets.forEach(bet => { if (summary.hasOwnProperty(bet.bet_on)) summary[bet.bet_on] += parseFloat(bet.amount); });
+        res.json({ summary });
+    } catch (err) { res.status(500).json({ error: 'Failed to fetch current bets.' }); }
+});
 
 // ==========================================
 // ============== SERVER START ==============
