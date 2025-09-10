@@ -247,7 +247,7 @@ async function runGameCycle() {
         if (lastDatePart === yyyymmdd) {
             nextPeriod = gameState.current_period + 1;
         } else {
-            nextPeriod = BigInt(yyyymmdd + "0001");
+            nextPeriod = Number(yyyymmdd + "0001");
         }
 
         const { data: bets } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
