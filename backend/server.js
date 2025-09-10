@@ -228,11 +228,44 @@ app.get('/api/fake-withdrawals', (req, res) => {
     res.json({ withdrawals });
 });
 
+// ADDED: Endpoint for Products and Plans Page
+app.get('/api/product-plans', authenticateToken, async (req, res) => {
+    // This is a sample response. In a real application, you would fetch this from your database.
+    const plans = [
+        // New (Pre-Sale)
+        { id: 101, name: 'Quantum Leap X1', category: 'new', price: 5000, dailyIncome: 250, totalReturn: 7500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 2).toISOString() },
+        { id: 102, name: 'Solaris Prime', category: 'new', price: 10000, dailyIncome: 550, totalReturn: 16500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 5).toISOString() },
+        { id: 103, name: 'Nebula Starter', category: 'new', price: 2500, dailyIncome: 120, totalReturn: 3600, durationDays: 30 },
+        { id: 104, name: 'Orion Fund', category: 'new', price: 7500, dailyIncome: 380, totalReturn: 11400, durationDays: 30 },
+        { id: 105, name: 'Galaxy Pilot', category: 'new', price: 15000, dailyIncome: 800, totalReturn: 24000, durationDays: 30 },
+        // Primary
+        { id: 201, name: 'Bronze Tier', category: 'primary', price: 490, dailyIncome: 80, totalReturn: 720, durationDays: 9 },
+        { id: 202, name: 'Silver Tier', category: 'primary', price: 750, dailyIncome: 85, totalReturn: 1190, durationDays: 14 },
+        { id: 203, name: 'Gold Tier', category: 'primary', price: 1500, dailyIncome: 180, totalReturn: 2700, durationDays: 15 },
+        { id: 204, name: 'Platinum Tier', category: 'primary', price: 3000, dailyIncome: 375, totalReturn: 5625, durationDays: 15 },
+        { id: 205, name: 'Diamond Tier', category: 'primary', price: 5000, dailyIncome: 650, totalReturn: 9750, durationDays: 15 },
+        // VIP
+        { id: 301, name: 'VIP Bronze', category: 'vip', price: 10000, dailyIncome: 1350, totalReturn: 20250, durationDays: 15 },
+        { id: 302, name: 'VIP Silver', category: 'vip', price: 20000, dailyIncome: 2800, totalReturn: 42000, durationDays: 15 },
+        { id: 303, name: 'VIP Gold', category: 'vip', price: 50000, dailyIncome: 7500, totalReturn: 112500, durationDays: 15 },
+        { id: 304, name: 'VIP Platinum', category: 'vip', price: 80000, dailyIncome: 12800, totalReturn: 192000, durationDays: 15 },
+        { id: 305, name: 'VIP Diamond', category: 'vip', price: 100000, dailyIncome: 17000, totalReturn: 255000, durationDays: 15 },
+        // Luxury
+        { id: 401, name: 'Luxury Sapphire', category: 'luxury', price: 150000, dailyIncome: 27000, totalReturn: 405000, durationDays: 15 },
+        { id: 402, name: 'Luxury Ruby', category: 'luxury', price: 200000, dailyIncome: 38000, totalReturn: 570000, durationDays: 15 },
+        { id: 403, name: 'Luxury Emerald', category: 'luxury', price: 300000, dailyIncome: 60000, totalReturn: 900000, durationDays: 15 },
+        { id: 404, name: 'Luxury Onyx', category: 'luxury', price: 500000, dailyIncome: 110000, totalReturn: 1650000, durationDays: 15 },
+        { id: 405, name: 'Luxury Pearl', category: 'luxury', price: 1000000, dailyIncome: 250000, totalReturn: 3750000, durationDays: 15 }
+    ];
+    res.json({ plans });
+});
+
+
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
 // ==========================================
-const GAME_DURATION_SECONDS = 180;
-const BETTING_WINDOW_SECONDS = 150;
+const GAME_DURATION_SECONDS = 30;
+const BETTING_WINDOW_SECONDS = 20;
 
 const getNumberProperties = (num) => {
     const colors = [];
@@ -391,9 +424,11 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Deposit approved successfully.' });
     } catch (err) {
+        console.error("Approve Deposit Error:", err);
         res.status(500).json({ error: 'Failed to approve deposit.' });
     }
 });
+
 
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
     try {
