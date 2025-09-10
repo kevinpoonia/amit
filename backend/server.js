@@ -275,8 +275,18 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 // ==========================================
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
-const getNumberProperties = (num) => { /* ... */ };
 
+// CRITICAL FIX: Added explicit 'return colors;'
+const getNumberProperties = (num) => {
+    const colors = [];
+    if ([1, 3, 7, 9].includes(num)) colors.push('Red');
+    if ([2, 4, 6, 8].includes(num)) colors.push('Green');
+    if ([0, 5].includes(num)) {
+        colors.push('Violet');
+        colors.push(num === 5 ? 'Green' : 'Red'); 
+    }
+    return colors;
+};
 async function runGameCycle() {
     try {
         const { data: gameState, error } = await supabase.from('game_state').select('*').single();
