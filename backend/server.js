@@ -14,8 +14,14 @@ const PORT = process.env.PORT || 10000;
 console.log(`Attempting to start server on port: ${PORT}`);
 
 // Middleware
-app.use(cors());
+// CRITICAL FIX: Specific CORS configuration to allow your Vercel frontend
+const corsOptions = {
+  origin: 'https://amit-sigma.vercel.app',
+  optionsSuccessStatus: 200 // For legacy browser support
+};
+app.use(cors(corsOptions));
 app.use(express.json());
+
 
 // Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
