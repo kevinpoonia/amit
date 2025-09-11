@@ -359,6 +359,19 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
 
+// Helper function (already in your file, but included for completeness of this block)
+const getNumberProperties = (num) => {
+    const colors = [];
+    if ([1, 3, 7, 9].includes(num)) colors.push('Red');
+    if ([2, 4, 6, 8].includes(num)) colors.push('Green');
+    if ([0, 5].includes(num)) {
+        colors.push('Violet');
+        colors.push(num === 5 ? 'Green' : 'Red');
+    }
+    return colors;
+};
+
+
 async function runGameCycle() {
     try {
         const { data: gameState, error } = await supabase.from('game_state').select('*').single();
@@ -376,11 +389,6 @@ async function runGameCycle() {
             nextPeriod = Number(yyyymmdd + "0001");
         }
 
-        if ((gameState.current_period - 1) % 50 === 0 && gameState.current_period > 1) {
-            const periodToDelete = gameState.current_period - 50;
-            await supabase.from('bets').delete().eq('game_period', periodToDelete);
-        }
-
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
         if (betsError) { console.error("Error fetching bets:", betsError); return; }
 
@@ -388,54 +396,72 @@ async function runGameCycle() {
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
         } else {
-            if (!bets || bets.length === 0) {
-                winningNumber = Math.floor(Math.random() * 10);
-            } else {
-                const totalPayouts = Array(10).fill(0);
-                let totalBetAmount = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
-                for (let i = 0; i < 10; i++) {
-                    const potentialColors = getNumberProperties(i);
-                    bets.forEach(bet => {
-                        if (bet.bet_on == i.toString()) totalPayouts[i] += parseFloat(bet.amount) * 9.2;
-                        if (potentialColors.includes(bet.bet_on)) {
-                            totalPayouts[i] += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
-                        }
-                    });
-                }
+            const totalBetAmount = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
+            const totalPayouts = Array(10).fill(0);
+            for (let i = 0; i < 10; i++) {
+                const potentialColors = getNumberProperties(i);
+                bets.forEach(bet => {
+                    let multiplier = 0;
+                    if (bet.bet_on == i.toString()) multiplier = 9.2;
+                    else if (potentialColors.includes(bet.bet_on)) multiplier = bet.bet_on === 'Violet' ? 4.5 : 1.98;
+                    totalPayouts[i] += parseFloat(bet.amount) * multiplier;
+                });
+            }
 
-                let minPayout = Infinity;
-                let potentialWinners = [];
-                for (let i = 0; i < 10; i++) {
-                    if (totalPayouts[i] <= totalBetAmount * 0.9) {
-                        if (totalPayouts[i] < minPayout) {
-                            minPayout = totalPayouts[i];
-                            potentialWinners = [i];
-                        } else if (totalPayouts[i] === minPayout) {
-                            potentialWinners.push(i);
-                        }
+            const shouldUsersWin = Math.random() * 100 < gameState.user_win_chance_percent;
+            
+            let potentialWinners = [];
+            if (shouldUsersWin && totalBetAmount > 0) {
+                // Find numbers where payout is high but less than total bet amount, making users win but not bankrupting the house
+                for(let i=0; i<10; i++) {
+                    if(totalPayouts[i] > 0 && totalPayouts[i] < totalBetAmount) {
+                        potentialWinners.push(i);
                     }
                 }
-                if (potentialWinners.length > 0) {
-                    winningNumber = potentialWinners[Math.floor(Math.random() * potentialWinners.length)];
-                } else {
-                    minPayout = Math.min(...totalPayouts);
-                    const lowestLossNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
-                    winningNumber = lowestLossNumbers.length > 0 ? lowestLossNumbers[Math.floor(Math.random() * lowestLossNumbers.length)] : Math.floor(Math.random() * 10);
-                }
+            }
+            
+            // If the "win" condition isn't met or no suitable winning number is found, find a number that loses or minimizes payout
+            if (potentialWinners.length === 0) {
+                 let minPayout = Infinity;
+                 for(let i=0; i<10; i++) {
+                     if (totalPayouts[i] < minPayout) {
+                         minPayout = totalPayouts[i];
+                         potentialWinners = [i];
+                     } else if (totalPayouts[i] === minPayout) {
+                         potentialWinners.push(i);
+                     }
+                 }
+            }
+
+            if (potentialWinners.length > 0) {
+                winningNumber = potentialWinners[Math.floor(Math.random() * potentialWinners.length)];
+            } else {
+                // Absolute fallback if no bets were placed or some other edge case
+                winningNumber = Math.floor(Math.random() * 10);
             }
         }
-
+        
         const winningColors = getNumberProperties(winningNumber);
         await supabase.from('game_results').insert({ game_period: gameState.current_period, result_number: winningNumber });
-
+        
         for (const bet of bets) {
-            let payout = 0; let status = 'lost';
-            if (bet.bet_on == winningNumber.toString() || winningColors.includes(bet.bet_on)) {
+            let payout = 0; 
+            let status = 'lost';
+            const winningNumberStr = winningNumber.toString();
+
+            if (bet.bet_on === winningNumberStr || winningColors.includes(bet.bet_on)) {
                 status = 'won';
-                if (bet.bet_on == winningNumber.toString()) payout += parseFloat(bet.amount) * 9.2;
-                if (winningColors.includes(bet.bet_on)) payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
+                if (bet.bet_on === winningNumberStr) {
+                    payout += parseFloat(bet.amount) * 9.2;
+                }
+                if (winningColors.includes(bet.bet_on)) {
+                    payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
+                }
             }
-            if (payout > 0) await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+            
+            if (payout > 0) {
+                await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+            }
             await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
         }
 
@@ -444,6 +470,7 @@ async function runGameCycle() {
             countdown_start_time: new Date().toISOString(),
             next_result: null
         }).eq('id', 1);
+
     } catch (e) {
         console.error("Game Cycle Error:", e);
     }
@@ -453,21 +480,26 @@ setInterval(runGameCycle, GAME_DURATION_SECONDS * 1000);
 app.get('/api/game-state', authenticateToken, async (req, res) => {
     const { data: gameState, error } = await supabase.from('game_state').select('*').single();
     if (error) return res.status(500).json({ error: 'Failed to fetch game state' });
+    
     if (gameState.maintenance_mode && !gameState.whitelisted_users.includes(req.user.id)) {
         return res.json({ maintenance: true });
     }
+    
     const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
     const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
     const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
+    
     res.json({ ...gameState, time_left: timeLeft > 0 ? timeLeft : 0, can_bet: canBet, results });
 });
 
 app.post('/api/bet', authenticateToken, async (req, res) => {
     const { amount, bet_on } = req.body;
     if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
+    
     try {
         const { data: gameState } = await supabase.from('game_state').select('*').single();
         const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
+        
         if (timeLeft <= (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
             return res.status(400).json({ error: 'Betting window is closed for this round.' });
         }
@@ -482,6 +514,68 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error("Bet placement error:", error);
         res.status(500).json({ error: 'Failed to place bet.' });
+    }
+});
+
+app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
+        if (gsError) throw gsError;
+        const current_period = gameState.current_period;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+        const today_start_period = Number(yyyymmdd + "0001");
+
+        const [
+            { data: totalStats, error: totalErr },
+            { data: todayStats, error: todayErr },
+            { data: currentStats, error: currentErr }
+        ] = await Promise.all([
+            supabase.from('bets').select('amount, payout'),
+            supabase.from('bets').select('amount, payout').gte('game_period', today_start_period),
+            supabase.from('bets').select('amount, payout').eq('game_period', current_period)
+        ]);
+
+        if (totalErr || todayErr || currentErr) throw totalErr || todayErr || currentErr;
+
+        const calculatePL = (records) => {
+            if (!records) return { totalIn: 0, totalOut: 0, pl: 0 };
+            const totalIn = records.reduce((sum, r) => sum + (r.amount || 0), 0);
+            const totalOut = records.reduce((sum, r) => sum + (r.payout || 0), 0);
+            return { totalIn, totalOut, pl: totalIn - totalOut };
+        };
+
+        res.json({
+            total: calculatePL(totalStats),
+            today: calculatePL(todayStats),
+            currentPeriod: calculatePL(currentStats)
+        });
+
+    } catch (error) {
+        console.error("Error fetching game statistics:", error);
+        res.status(500).json({ error: 'Failed to fetch game statistics.' });
+    }
+});
+
+app.post('/api/admin/set-win-chance', authenticateAdmin, async (req, res) => {
+    const { winChance } = req.body;
+    if (winChance === undefined || winChance < 0 || winChance > 100) {
+        return res.status(400).json({ error: 'Please provide a valid win chance percentage (0-100).' });
+    }
+    try {
+        const { error } = await supabase
+            .from('game_state')
+            .update({ user_win_chance_percent: winChance })
+            .eq('id', 1);
+
+        if (error) throw error;
+        res.json({ message: `User win chance set to ${winChance}%.` });
+    } catch (error) {
+        console.error("Error setting win chance:", error);
+        res.status(500).json({ error: 'Failed to update win chance.' });
     }
 });
 
@@ -615,38 +709,146 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     }
 });
 
+// ==========================================
+// ========== ADMIN GAME ENDPOINTS ==========
+// ==========================================
+
 app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    try { const { data, error } = await supabase.from('game_state').select('*').single(); if (error) throw error; res.json({ status: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch game status.' }); }
+    try {
+        const { data, error } = await supabase.from('game_state').select('*').single();
+        if (error) throw error;
+        res.json({ status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch game status.' });
+    }
 });
+
 app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     const { is_on, mode } = req.body;
     const updateData = {};
     if (typeof is_on === 'boolean') updateData.is_on = is_on;
     if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
     if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
-    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Game status updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update game status.' }); }
+
+    try {
+        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single();
+        if (error) throw error;
+        res.json({ message: 'Game status updated.', status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update game status.' });
+    }
 });
+
 app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => {
     const { maintenance_mode, whitelisted_users } = req.body;
     const updateData = {};
     if (typeof maintenance_mode === 'boolean') updateData.maintenance_mode = maintenance_mode;
     if (Array.isArray(whitelisted_users)) updateData.whitelisted_users = whitelisted_users.map(id => parseInt(id, 10)).filter(id => !isNaN(id));
     if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid data provided.' });
-    try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Maintenance settings updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update maintenance settings.' }); }
+
+    try {
+        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single();
+        if (error) throw error;
+        res.json({ message: 'Maintenance settings updated.', status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update maintenance settings.' });
+    }
 });
+
 app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
-    try { await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); res.json({ message: 'Next result set.' }); } catch (err) { res.status(500).json({ error: 'Failed to set next result.' }); }
+    const { result } = req.body;
+    if (result === undefined || result < 0 || result > 9) {
+        return res.status(400).json({ error: 'A valid result (0-9) is required.' });
+    }
+    try {
+        await supabase.from('game_state').update({ next_result: result }).eq('id', 1);
+        res.json({ message: 'Next result set.' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to set next result.' });
+    }
 });
+
 app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     try {
         const { data: gameState } = await supabase.from('game_state').select('current_period').single();
+        if (!gameState) throw new Error("Game state not found.");
+
         const { data: bets } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
         const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
-        bets.forEach(bet => { if (summary.hasOwnProperty(bet.bet_on)) summary[bet.bet_on] += parseFloat(bet.amount); });
+        if (bets) {
+            bets.forEach(bet => {
+                if (summary.hasOwnProperty(bet.bet_on)) {
+                    summary[bet.bet_on] += parseFloat(bet.amount);
+                }
+            });
+        }
         res.json({ summary });
-    } catch (err) { res.status(500).json({ error: 'Failed to fetch current bets.' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch current bets.' });
+    }
 });
 
+app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
+        if (gsError) throw gsError;
+        const current_period = gameState.current_period;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+        const today_start_period = Number(yyyymmdd + "0001");
+
+        const [
+            { data: totalStats, error: totalErr },
+            { data: todayStats, error: todayErr },
+            { data: currentStats, error: currentErr }
+        ] = await Promise.all([
+            supabase.from('bets').select('amount, payout'),
+            supabase.from('bets').select('amount, payout').gte('game_period', today_start_period),
+            supabase.from('bets').select('amount, payout').eq('game_period', current_period)
+        ]);
+
+        if (totalErr || todayErr || currentErr) throw totalErr || todayErr || currentErr;
+
+        const calculatePL = (records) => {
+            if (!records) return { totalIn: 0, totalOut: 0, pl: 0 };
+            const totalIn = records.reduce((sum, r) => sum + (r.amount || 0), 0);
+            const totalOut = records.reduce((sum, r) => sum + (r.payout || 0), 0);
+            return { totalIn, totalOut, pl: totalIn - totalOut };
+        };
+
+        res.json({
+            total: calculatePL(totalStats),
+            today: calculatePL(todayStats),
+            currentPeriod: calculatePL(currentStats)
+        });
+
+    } catch (error) {
+        console.error("Error fetching game statistics:", error);
+        res.status(500).json({ error: 'Failed to fetch game statistics.' });
+    }
+});
+
+app.post('/api/admin/set-win-chance', authenticateAdmin, async (req, res) => {
+    const { winChance } = req.body;
+    if (winChance === undefined || winChance < 0 || winChance > 100) {
+        return res.status(400).json({ error: 'Please provide a valid win chance percentage (0-100).' });
+    }
+    try {
+        const { error } = await supabase
+            .from('game_state')
+            .update({ user_win_chance_percent: winChance })
+            .eq('id', 1);
+
+        if (error) throw error;
+        res.json({ message: `User win chance set to ${winChance}%.` });
+    } catch (error) {
+        console.error("Error setting win chance:", error);
+        res.status(500).json({ error: 'Failed to update win chance.' });
+    }
+});
 
 // ==========================================
 // ============== SERVER START ==============
