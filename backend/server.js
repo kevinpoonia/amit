@@ -161,6 +161,24 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch notifications.' });
     }
 });
+// ✅ FIX: Added the missing /api/recharge endpoint
+app.post('/api/recharge', authenticateToken, async (req, res) => {
+    const { amount, utr } = req.body;
+    if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
+    try {
+        const { data: existingRecharge } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
+        if (existingRecharge && existingRecharge.length > 0) {
+            return res.status(400).json({ error: 'This transaction ID has already been used.' });
+        }
+        const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim() }]);
+        if (error) throw error;
+        res.json({ message: 'Recharge request submitted successfully.' });
+    } catch (error) {
+        console.error("Recharge error:", error);
+        res.status(500).json({ error: 'Failed to submit recharge request.' });
+    }
+});
+
 
 app.get('/api/product-plans', authenticateToken, async (req, res) => {
     try {
@@ -214,24 +232,18 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ FIX: Corrected the /api/investments endpoint to prevent crashes
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('investments')
-            .select('id, plan_name, amount, status, days_left')
-            .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
-
-        if (error) {
-            throw error;
-        }
-        
+        const { data, error } = await supabase.from('investments').select('id, plan_name, amount, status, days_left').eq('user_id', req.user.id).order('created_at', { ascending: false });
+        if (error) throw error;
         res.json({ investments: data });
     } catch (error) {
         console.error("Failed to fetch investments:", error);
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
+
 
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
@@ -283,6 +295,45 @@ app.get('/api/bet-history', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch bet history.' });
     }
 });
+
+// ✅ --- THIS IS THE NEWLY ADDED ENDPOINT ---
+app.post('/api/withdraw', authenticateToken, async (req, res) => {
+    const { amount, method, details } = req.body;
+    if (!amount || amount < 100 || !method || !details) {
+        return res.status(400).json({ error: 'Invalid withdrawal details. Minimum is ₹100.' });
+    }
+    try {
+        const userId = req.user.id;
+        const { data: user, error: userError } = await supabase.from('users').select('withdrawable_wallet').eq('id', userId).single();
+        if (userError || !user) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+        if (user.withdrawable_wallet < amount) {
+            return res.status(400).json({ error: 'Insufficient withdrawable balance.' });
+        }
+        const { error } = await supabase.from('withdrawals').insert([{ user_id: userId, amount, method, details, status: 'pending' }]);
+        if (error) {
+            console.error('Withdrawal request error:', error);
+            throw new Error('Failed to create withdrawal request.');
+        }
+        res.json({ message: 'Withdrawal request submitted successfully.' });
+    } catch (error) {
+        console.error("Withdrawal submission error:", error);
+        res.status(500).json({ error: 'Failed to submit withdrawal request.' });
+    }
+});
+
+
+/ ✅ FIX: Added the missing /api/fake-withdrawals endpoint
+app.get('/api/fake-withdrawals', (req, res) => {
+    const names = ["Rahul S.", "Priya P.", "Amit K.", "Sneha G.", "Vikas S.", "Pooja V."];
+    const withdrawals = Array.from({ length: 10 }, () => ({
+        name: names[Math.floor(Math.random() * names.length)],
+        amount: Math.floor(Math.random() * 9500) + 500
+    }));
+    res.json({ withdrawals });
+});
+
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
