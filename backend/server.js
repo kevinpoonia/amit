@@ -144,71 +144,80 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ --- THIS IS THE MISSING ENDPOINT THAT CAUSED THE LOGIN PROBLEM --- ✅
 app.get('/api/notifications', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        // This is a basic implementation. You can add more notification types later.
         const { data: newRecharges, error } = await supabase
             .from('recharges')
             .select('id, amount')
             .eq('user_id', userId)
             .eq('status', 'approved')
             .eq('seen_by_user', false);
-
         if (error) throw error;
-
         const notifications = newRecharges.map(r => ({
             id: `recharge-${r.id}`,
             type: 'deposit_approved',
             message: `Your deposit of ₹${r.amount.toLocaleString()} has been approved!`
         }));
-
-        res.json({ notifications }); // Always return an array, even if it's empty
+        res.json({ notifications });
     } catch (error) {
         console.error('Error fetching notifications:', error);
         res.status(500).json({ error: 'Failed to fetch notifications.' });
     }
 });
 
-app.post('/api/recharge', authenticateToken, async (req, res) => {
-    const { amount, utr } = req.body;
-    if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
+app.get('/api/product-plans', authenticateToken, async (req, res) => {
     try {
-        const { data: existingRecharge } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
-        if (existingRecharge && existingRecharge.length > 0) {
-            return res.status(400).json({ error: 'This transaction ID has already been used for a successful recharge.' });
-        }
-        const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim(), request_date: new Date().toISOString() }]);
+        const { data, error } = await supabase.from('product_plans').select('*').order('id');
         if (error) throw error;
-        res.json({ message: 'Recharge request submitted.' });
+        res.json({ plans: data });
     } catch (error) {
-        console.error("Recharge error:", error);
-        res.status(500).json({ error: 'Failed to submit recharge.' });
+        console.error('Error fetching product plans:', error);
+        res.status(500).json({ error: 'Failed to fetch product plans.' });
     }
 });
 
-app.post('/api/withdraw', authenticateToken, async (req, res) => {
-    const { amount, method, details } = req.body;
-    if (!amount || amount < 100 || !method || !details) { return res.status(400).json({ error: 'Invalid withdrawal details.' }); }
+app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
+    const { id, price, name, durationDays } = req.body;
+    if (!id || !price || !name || !durationDays) {
+        return res.status(400).json({ error: 'Missing required plan details.' });
+    }
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('withdrawable_wallet').eq('id', req.user.id).single();
-        if (userError || !user) { return res.status(404).json({ error: 'User not found.' }); }
-        if (user.withdrawable_wallet < amount) { return res.status(400).json({ error: 'Insufficient balance.' }); }
+        const userId = req.user.id;
+        const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', {
+            p_user_id: userId,
+            p_amount: price
+        });
 
-        // Logic changed: Do not deduct balance on request. Deduct on approval.
-        const { error } = await supabase.from('withdrawals').insert([{ user_id: req.user.id, amount, method, details, gst_amount: amount * 0.18, net_amount: amount * 0.82 }]);
-        if (error) {
-            throw error;
+        if (rpcError || !deductionSuccess) {
+            console.error('RPC Error or insufficient balance:', rpcError);
+            return res.status(400).json({ error: 'Insufficient total balance.' });
         }
-        res.json({ message: 'Withdrawal request submitted successfully.' });
+
+        const { error: investmentError } = await supabase.from('investments').insert([
+            {
+                user_id: userId,
+                plan_id: id,
+                plan_name: name,
+                amount: price,
+                status: 'active',
+                days_left: durationDays
+            }
+        ]);
+
+        if (investmentError) {
+            console.error('Investment Insert Error:', investmentError);
+            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
+            throw new Error('Failed to record investment after purchase.');
+        }
+
+        res.json({ message: 'Plan purchased successfully!' });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to submit withdrawal.' });
+        console.error('Plan purchase error:', error.message);
+        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
     }
 });
 
-// ✅ --- THIS ENDPOINT IS THE FIX ---
-// This new version is simpler and more robust, preventing the crash.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -227,18 +236,10 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
-        if (investmentError) {
-            console.error('Investment Insert Error:', investmentError);
-            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
-            throw new Error('Failed to record investment after purchase.');
-        }
 
-        res.json({ message: 'Plan purchased successfully!' });
-    } catch (error) {
-        console.error('Plan purchase error:', error.message);
-        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
-    }
-});
+// ✅ --- THIS IS WHERE THE ERROR WAS ---
+// The misplaced code block from after the investments route has been removed.
+
 app.get('/api/bet-history', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase.from('bets').select('*').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(50);
