@@ -305,6 +305,10 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
     }
 });
 
+
+
+// ✅ --- THIS IS THE FIXED ENDPOINT ---
+// The function is now correctly declared as 'async'
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     const { id, price, name, durationDays } = req.body;
     if (!id || !price || !name || !durationDays) {
@@ -319,7 +323,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
 
         if (rpcError || !deductionSuccess) {
             console.error('RPC Error or insufficient balance:', rpcError);
-            return res.status(400).json({ error: 'Insufficient total balance to purchase this plan.' });
+            return res.status(400).json({ error: 'Insufficient total balance.' });
         }
 
         const { error: investmentError } = await supabase.from('investments').insert([
@@ -335,6 +339,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
 
         if (investmentError) {
             console.error('Investment Insert Error:', investmentError);
+            // This await is now valid because the function is async
             await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
             throw new Error('Failed to record investment after purchase.');
         }
@@ -345,6 +350,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
     }
 });
+
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
