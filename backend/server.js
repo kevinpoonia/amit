@@ -314,8 +314,9 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
                 user_id: userId,
                 plan_id: planId,
                 plan_name: name,
-                amount_invested: price,
-                status: 'active'
+                amount: price, // ✅ FIXED: Changed from 'amount_invested' to match your schema
+                status: 'active',
+                days_left: durationDays // ✨ ADDED: To correctly track the plan's duration
             }
         ]);
 
