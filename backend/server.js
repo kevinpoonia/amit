@@ -425,13 +425,28 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         const { data: recharge, error: fetchError } = await supabase.from('recharges').select('*').eq('id', id).single();
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
         if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
-        
-        await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
-        await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
-        
-        res.json({ message: 'Deposit approved successfully.' });
+
+        // Increment the user's balance by the recharge amount
+        // Ensure you have the 'increment_user_balance' function created in Supabase
+        const { error: balanceUpdateError } = await supabase.rpc('increment_user_balance', {
+            p_user_id: recharge.user_id,
+            p_amount: recharge.amount
+        });
+        if (balanceUpdateError) {
+            console.error("Error incrementing user balance:", balanceUpdateError);
+            throw balanceUpdateError; // Propagate error if balance update fails
+        }
+
+        // Update the recharge status to approved
+        const { error: updateRechargeError } = await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
+        if (updateRechargeError) {
+            console.error("Error updating recharge status:", updateRechargeError);
+            throw updateRechargeError; // Propagate error if status update fails
+        }
+
+        res.json({ message: 'Deposit approved successfully and balance updated.' });
     } catch (err) {
-        console.error("Approve Deposit Error:", err);
+        console.error("Failed to approve deposit:", err);
         res.status(500).json({ error: 'Failed to approve deposit.' });
     }
 });
