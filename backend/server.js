@@ -213,16 +213,20 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
-            .select('id, plan_name, amount, status, days_left') // Select specific, needed columns
+            .select('id, plan_name, amount, status, days_left')
             .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false }); // Show newest first
+            .order('created_at', { ascending: false });
 
-        if (error) throw error;
+        if (error) {
+            throw error;
+        }
         
         res.json({ investments: data });
-    } catch (error)
-        );
-
+    } catch (error) {
+        console.error("Failed to fetch investments:", error);
+        res.status(500).json({ error: 'Failed to fetch user investments.' });
+    }
+});
         if (investmentError) {
             console.error('Investment Insert Error:', investmentError);
             await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
