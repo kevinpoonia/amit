@@ -282,28 +282,37 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
     res.json({ plans });
 });
 
+// ✅ --- THIS ENDPOINT IS UPDATED --- ✅
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
-    const { planId, price, name, dailyIncome, durationDays, totalReturn } = req.body;
+    const { id: planId, price, name } = req.body;
     if (!planId || !price || !name) {
         return res.status(400).json({ error: 'Missing required plan details.' });
     }
 
     try {
         const userId = req.user.id;
-        const { data: user, error: userError } = await supabase.from('users').select('balance').eq('id', userId).single();
-        if (userError || !user) throw new Error('User not found.');
 
-        if (user.balance < price) {
-            return res.status(400).json({ error: 'Insufficient balance to purchase this plan.' });
+        // Call the new RPC function to handle the complex deduction from total balance
+        const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', {
+            p_user_id: userId,
+            p_amount: price
+        });
+
+        if (rpcError) {
+            console.error('RPC deduction error:', rpcError);
+            throw new Error('Database error during balance deduction.');
         }
 
-        const { error: deductError } = await supabase.rpc('decrement_user_balance', { p_user_id: userId, p_amount: price });
-        if (deductError) throw deductError;
+        // The function returns `false` if the total balance is insufficient
+        if (!deductionSuccess) {
+            return res.status(400).json({ error: 'Insufficient total balance to purchase this plan.' });
+        }
 
+        // Record the investment in the `investments` table
         const { error: investmentError } = await supabase.from('investments').insert([
             {
                 user_id: userId,
-                plan_id: planId, // Assuming you have a plan_id column
+                plan_id: planId,
                 plan_name: name,
                 amount_invested: price,
                 status: 'active'
@@ -311,17 +320,19 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         ]);
 
         if (investmentError) {
-            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price }); // Refund on failure
-            throw investmentError;
+            // If recording the investment fails, we must refund the user.
+            // For simplicity, we'll add it back to the main balance.
+            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
+            throw new Error('Failed to record investment after purchase.');
         }
 
         res.json({ message: 'Plan purchased successfully!' });
+
     } catch (error) {
-        console.error('Plan purchase error:', error);
-        res.status(500).json({ error: 'Failed to purchase plan.' });
+        console.error('Plan purchase error:', error.message);
+        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
     }
 });
-
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
