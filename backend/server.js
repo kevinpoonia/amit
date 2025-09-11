@@ -271,71 +271,59 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ --- THIS ENDPOINT IS NOW DATA-DRIVEN ---
 app.get('/api/product-plans', authenticateToken, async (req, res) => {
-    // This is placeholder data. For a real app, you should fetch this from your database.
-    const plans = [
-        { id: 101, name: 'Quantum Leap X1', category: 'new', price: 5000, dailyIncome: 250, totalReturn: 7500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 2).toISOString() },
-        { id: 102, name: 'Solaris Prime', category: 'new', price: 10000, dailyIncome: 550, totalReturn: 16500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 5).toISOString() },
-        { id: 201, name: 'Bronze Tier', category: 'primary', price: 490, dailyIncome: 80, totalReturn: 720, durationDays: 9 },
-        { id: 202, name: 'Silver Tier', category: 'primary', price: 750, dailyIncome: 85, totalReturn: 1190, durationDays: 14 },
-    ];
-    res.json({ plans });
+    try {
+        const { data, error } = await supabase.from('product_plans').select('*').order('id');
+        if (error) throw error;
+        res.json({ plans: data });
+    } catch (error) {
+        console.error('Error fetching product plans:', error);
+        res.status(500).json({ error: 'Failed to fetch product plans.' });
+    }
 });
 
-// ✅ --- THIS IS THE CORRECTED AND COMPLETE ENDPOINT --- ✅
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
-    // We explicitly destructure the exact properties we expect from the frontend.
     const { id, price, name, durationDays } = req.body;
-
-    // This validation now correctly checks for all required properties.
     if (!id || !price || !name || !durationDays) {
-        return res.status(400).json({ error: 'Missing required plan details from request.' });
+        return res.status(400).json({ error: 'Missing required plan details.' });
     }
-
     try {
         const userId = req.user.id;
-
-        // Call the RPC function to handle deduction from the user's total balance.
         const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', {
             p_user_id: userId,
             p_amount: price
         });
 
-        if (rpcError) {
-            console.error('RPC deduction error:', rpcError);
-            throw new Error('Database error during balance deduction.');
-        }
-
-        if (!deductionSuccess) {
+        if (rpcError || !deductionSuccess) {
+            console.error('RPC Error or insufficient balance:', rpcError);
             return res.status(400).json({ error: 'Insufficient total balance to purchase this plan.' });
         }
 
-        // Record the investment in the `investments` table.
         const { error: investmentError } = await supabase.from('investments').insert([
             {
                 user_id: userId,
-                plan_id: id, // Use the 'id' from the request body.
+                plan_id: id,
                 plan_name: name,
-                amount: price, // Matches your 'amount' column in the DB.
+                amount: price,
                 status: 'active',
-                days_left: durationDays // Correctly uses the defined 'durationDays'.
+                days_left: durationDays
             }
         ]);
 
         if (investmentError) {
             console.error('Investment Insert Error:', investmentError);
-            // If recording the investment fails, refund the user to prevent money loss.
             await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
             throw new Error('Failed to record investment after purchase.');
         }
 
         res.json({ message: 'Plan purchased successfully!' });
-
     } catch (error) {
         console.error('Plan purchase error:', error.message);
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
     }
 });
+
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
 // ==========================================
