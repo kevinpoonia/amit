@@ -547,6 +547,59 @@ app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Failed to fetch current bets.' }); }
 });
 
+// API for purchasing a plan
+app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
+    const { planId, price, dailyIncome, durationDays, totalReturn, name } = req.body;
+    if (!planId || !price || !dailyIncome || !durationDays || !totalReturn || !name) {
+        return res.status(400).json({ error: 'Missing plan details.' });
+    }
+
+    try {
+        const userId = req.user.id;
+        const { data: user, error: userError } = await supabase.from('users').select('balance').eq('id', userId).single();
+        if (userError || !user) throw userError || new Error('User not found.');
+
+        if (user.balance < price) {
+            return res.status(400).json({ error: 'Insufficient balance to purchase this plan.' });
+        }
+
+        // Deduct the plan price from the user's balance
+        const { error: deductError } = await supabase.rpc('decrement_user_balance', { p_user_id: userId, p_amount: price });
+        if (deductError) throw deductError;
+
+        // Record the investment
+        const { data: newInvestment, error: investmentError } = await supabase.from('investments').insert([
+            {
+                user_id: userId,
+                plan_id: planId,
+                plan_name: name,
+                amount_invested: price,
+                daily_return: dailyIncome,
+                duration_days: durationDays,
+                expected_total_return: totalReturn,
+                start_date: new Date().toISOString(),
+                status: 'active'
+            }
+        ]).select().single();
+
+        if (investmentError) {
+            // If recording investment fails, try to refund the user's balance
+            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
+            throw investmentError;
+        }
+
+        res.json({ message: 'Plan purchased successfully!', investment: newInvestment });
+
+    } catch (error) {
+        console.error('Plan purchase error:', error);
+        if (error.message && error.message.includes('Insufficient balance')) {
+            return res.status(400).json({ error: error.message });
+        }
+        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
+    }
+});
+
+
 // ==========================================
 // ============== SERVER START ==============
 // ==========================================
