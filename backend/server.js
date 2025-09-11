@@ -14,7 +14,8 @@ const PORT = process.env.PORT || 10000;
 console.log(`Attempting to start server on port: ${PORT}`);
 
 // Middleware
-app.use(cors({ origin: 'https://amit-sigma.vercel.app' }));
+// CRITICAL: Allow both your deployed frontend and local development server
+app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
 app.use(express.json());
 
 // Initialize Supabase client
@@ -64,6 +65,18 @@ const generateIpUsername = (username) => {
     return `${namePart}@${username.length}`;
 };
 
+const getNumberProperties = (num) => {
+    const colors = [];
+    if ([1, 3, 7, 9].includes(num)) colors.push('Red');
+    if ([2, 4, 6, 8].includes(num)) colors.push('Green');
+    if ([0, 5].includes(num)) {
+        colors.push('Violet');
+        colors.push(num === 5 ? 'Green' : 'Red');
+    }
+    return colors;
+};
+
+
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
@@ -74,7 +87,7 @@ app.post('/api/register', async (req, res) => {
     try {
         const ip_username = generateIpUsername(username);
         const { data: existingUser, error: existingUserError } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`).limit(1);
-        if(existingUserError) throw existingUserError;
+        if (existingUserError) throw existingUserError;
         if (existingUser && existingUser.length > 0) { return res.status(400).json({ error: 'User with this mobile or username format already exists' }); }
 
         let referredById = null;
@@ -87,7 +100,7 @@ app.post('/api/register', async (req, res) => {
 
         const { data: newUser, error: insertError } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
         if (insertError) throw insertError;
-        
+
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: 'User registered successfully', token });
     } catch (error) {
@@ -102,7 +115,7 @@ app.post('/api/login', async (req, res) => {
     try {
         const { data: user, error } = await supabase.from('users').select('*').eq('mobile', mobile).single();
         if (error || !user || user.password !== password) { return res.status(400).json({ error: 'Invalid credentials' }); }
-        
+
         const token = jwt.sign({ id: user.id, name: user.name, is_admin: user.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.json({ message: 'Login successful', token, user: { id: user.id, name: user.name, is_admin: user.is_admin } });
     } catch (error) {
@@ -131,12 +144,39 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ --- THIS IS THE MISSING ENDPOINT THAT CAUSED THE LOGIN PROBLEM --- ✅
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // This is a basic implementation. You can add more notification types later.
+        const { data: newRecharges, error } = await supabase
+            .from('recharges')
+            .select('id, amount')
+            .eq('user_id', userId)
+            .eq('status', 'approved')
+            .eq('seen_by_user', false);
+
+        if (error) throw error;
+
+        const notifications = newRecharges.map(r => ({
+            id: `recharge-${r.id}`,
+            type: 'deposit_approved',
+            message: `Your deposit of ₹${r.amount.toLocaleString()} has been approved!`
+        }));
+
+        res.json({ notifications }); // Always return an array, even if it's empty
+    } catch (error) {
+        console.error('Error fetching notifications:', error);
+        res.status(500).json({ error: 'Failed to fetch notifications.' });
+    }
+});
+
 app.post('/api/recharge', authenticateToken, async (req, res) => {
     const { amount, utr } = req.body;
     if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
     try {
         const { data: existingRecharge } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
-        if(existingRecharge && existingRecharge.length > 0) {
+        if (existingRecharge && existingRecharge.length > 0) {
             return res.status(400).json({ error: 'This transaction ID has already been used for a successful recharge.' });
         }
         const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim(), request_date: new Date().toISOString() }]);
@@ -155,15 +195,13 @@ app.post('/api/withdraw', authenticateToken, async (req, res) => {
         const { data: user, error: userError } = await supabase.from('users').select('withdrawable_wallet').eq('id', req.user.id).single();
         if (userError || !user) { return res.status(404).json({ error: 'User not found.' }); }
         if (user.withdrawable_wallet < amount) { return res.status(400).json({ error: 'Insufficient balance.' }); }
-        
-        await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: req.user.id, p_amount: amount });
-        
+
+        // Logic changed: Do not deduct balance on request. Deduct on approval.
         const { error } = await supabase.from('withdrawals').insert([{ user_id: req.user.id, amount, method, details, gst_amount: amount * 0.18, net_amount: amount * 0.82 }]);
         if (error) {
-            await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: req.user.id, p_amount: amount });
             throw error;
         }
-        res.json({ message: 'Withdrawal request submitted.' });
+        res.json({ message: 'Withdrawal request submitted successfully.' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to submit withdrawal.' });
     }
@@ -202,23 +240,26 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
         const { data: user, error: userError } = await supabase.from('users').select('ip_username').eq('id', userId).single();
-        if(userError) throw userError;
+        if (userError) throw userError;
 
         const { data: referredUsersData, error: referredUsersError } = await supabase.from('users').select('id, name').eq('referred_by', userId);
-        if(referredUsersError) throw referredUsersError;
+        if (referredUsersError) throw referredUsersError;
 
+        // This part assumes a 'referral_commissions' table. If it doesn't exist, it will fail gracefully.
         const referredUserIds = referredUsersData.map(u => u.id);
-        
-        const { data: commissions, error: commissionError } = await supabase.from('referral_commissions').select('referred_user_id, commission_amount').in('referred_user_id', referredUserIds);
-        if(commissionError) throw commissionError;
-        
-        const bonusMap = commissions.reduce((acc, curr) => {
-            acc[curr.referred_user_id] = (acc[curr.referred_user_id] || 0) + parseFloat(curr.commission_amount);
-            return acc;
-        }, {});
+        let bonusMap = {};
+        if (referredUserIds.length > 0) {
+            const { data: commissions } = await supabase.from('referral_commissions').select('referred_user_id, commission_amount').in('referred_user_id', referredUserIds);
+            if (commissions) {
+                bonusMap = commissions.reduce((acc, curr) => {
+                    acc[curr.referred_user_id] = (acc[curr.referred_user_id] || 0) + parseFloat(curr.commission_amount);
+                    return acc;
+                }, {});
+            }
+        }
 
-        const referredUsers = referredUsersData.map(u => ({...u, bonusEarned: bonusMap[u.id] || 0 }));
-        
+        const referredUsers = referredUsersData.map(u => ({ ...u, bonusEarned: bonusMap[u.id] || 0 }));
+
         res.json({
             referralLink: `https://amit-sigma.vercel.app/?ref=${user.ip_username}`,
             activeReferrals: 0, // Placeholder
@@ -231,30 +272,56 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 });
 
 app.get('/api/product-plans', authenticateToken, async (req, res) => {
+    // This is placeholder data. For a real app, you should fetch this from your database.
     const plans = [
         { id: 101, name: 'Quantum Leap X1', category: 'new', price: 5000, dailyIncome: 250, totalReturn: 7500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 2).toISOString() },
         { id: 102, name: 'Solaris Prime', category: 'new', price: 10000, dailyIncome: 550, totalReturn: 16500, durationDays: 30, preSaleEndDate: new Date(Date.now() + 86400000 * 5).toISOString() },
-        { id: 103, name: 'Nebula Starter', category: 'new', price: 2500, dailyIncome: 120, totalReturn: 3600, durationDays: 30 },
-        { id: 104, name: 'Orion Fund', category: 'new', price: 7500, dailyIncome: 380, totalReturn: 11400, durationDays: 30 },
-        { id: 105, name: 'Galaxy Pilot', category: 'new', price: 15000, dailyIncome: 800, totalReturn: 24000, durationDays: 30 },
         { id: 201, name: 'Bronze Tier', category: 'primary', price: 490, dailyIncome: 80, totalReturn: 720, durationDays: 9 },
         { id: 202, name: 'Silver Tier', category: 'primary', price: 750, dailyIncome: 85, totalReturn: 1190, durationDays: 14 },
-        { id: 203, name: 'Gold Tier', category: 'primary', price: 1500, dailyIncome: 180, totalReturn: 2700, durationDays: 15 },
-        { id: 204, name: 'Platinum Tier', category: 'primary', price: 3000, dailyIncome: 375, totalReturn: 5625, durationDays: 15 },
-        { id: 205, name: 'Diamond Tier', category: 'primary', price: 5000, dailyIncome: 650, totalReturn: 9750, durationDays: 15 },
-        { id: 301, name: 'VIP Bronze', category: 'vip', price: 10000, dailyIncome: 1350, totalReturn: 20250, durationDays: 15 },
-        { id: 302, name: 'VIP Silver', category: 'vip', price: 20000, dailyIncome: 2800, totalReturn: 42000, durationDays: 15 },
-        { id: 303, name: 'VIP Gold', category: 'vip', price: 50000, dailyIncome: 7500, totalReturn: 112500, durationDays: 15 },
-        { id: 304, name: 'VIP Platinum', category: 'vip', price: 80000, dailyIncome: 12800, totalReturn: 192000, durationDays: 15 },
-        { id: 305, name: 'VIP Diamond', category: 'vip', price: 100000, dailyIncome: 17000, totalReturn: 255000, durationDays: 15 },
-        { id: 401, name: 'Luxury Sapphire', category: 'luxury', price: 150000, dailyIncome: 27000, totalReturn: 405000, durationDays: 15 },
-        { id: 402, name: 'Luxury Ruby', category: 'luxury', price: 200000, dailyIncome: 38000, totalReturn: 570000, durationDays: 15 },
-        { id: 403, name: 'Luxury Emerald', category: 'luxury', price: 300000, dailyIncome: 60000, totalReturn: 900000, durationDays: 15 },
-        { id: 404, name: 'Luxury Onyx', category: 'luxury', price: 500000, dailyIncome: 110000, totalReturn: 1650000, durationDays: 15 },
-        { id: 405, name: 'Luxury Pearl', category: 'luxury', price: 1000000, dailyIncome: 250000, totalReturn: 3750000, durationDays: 15 }
     ];
     res.json({ plans });
 });
+
+app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
+    const { planId, price, name, dailyIncome, durationDays, totalReturn } = req.body;
+    if (!planId || !price || !name) {
+        return res.status(400).json({ error: 'Missing required plan details.' });
+    }
+
+    try {
+        const userId = req.user.id;
+        const { data: user, error: userError } = await supabase.from('users').select('balance').eq('id', userId).single();
+        if (userError || !user) throw new Error('User not found.');
+
+        if (user.balance < price) {
+            return res.status(400).json({ error: 'Insufficient balance to purchase this plan.' });
+        }
+
+        const { error: deductError } = await supabase.rpc('decrement_user_balance', { p_user_id: userId, p_amount: price });
+        if (deductError) throw deductError;
+
+        const { error: investmentError } = await supabase.from('investments').insert([
+            {
+                user_id: userId,
+                plan_id: planId, // Assuming you have a plan_id column
+                plan_name: name,
+                amount_invested: price,
+                status: 'active'
+            }
+        ]);
+
+        if (investmentError) {
+            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price }); // Refund on failure
+            throw investmentError;
+        }
+
+        res.json({ message: 'Plan purchased successfully!' });
+    } catch (error) {
+        console.error('Plan purchase error:', error);
+        res.status(500).json({ error: 'Failed to purchase plan.' });
+    }
+});
+
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
@@ -262,27 +329,16 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
 
-const getNumberProperties = (num) => {
-    const colors = [];
-    if ([1, 3, 7, 9].includes(num)) colors.push('Red');
-    if ([2, 4, 6, 8].includes(num)) colors.push('Green');
-    if ([0, 5].includes(num)) {
-        colors.push('Violet');
-        colors.push(num === 5 ? 'Green' : 'Red'); 
-    }
-    return colors;
-};
-
 async function runGameCycle() {
     try {
         const { data: gameState, error } = await supabase.from('game_state').select('*').single();
         if (error || !gameState || !gameState.is_on) return;
-        
+
         const today = new Date();
         const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
         const lastPeriodStr = gameState.current_period.toString();
         const lastDatePart = lastPeriodStr.substring(0, 8);
-        
+
         let nextPeriod;
         if (lastDatePart === yyyymmdd) {
             nextPeriod = Number(gameState.current_period) + 1;
@@ -316,12 +372,12 @@ async function runGameCycle() {
                         }
                     });
                 }
-                
+
                 let minPayout = Infinity;
                 let potentialWinners = [];
                 for (let i = 0; i < 10; i++) {
                     if (totalPayouts[i] <= totalBetAmount * 0.9) {
-                         if (totalPayouts[i] < minPayout) {
+                        if (totalPayouts[i] < minPayout) {
                             minPayout = totalPayouts[i];
                             potentialWinners = [i];
                         } else if (totalPayouts[i] === minPayout) {
@@ -341,7 +397,7 @@ async function runGameCycle() {
 
         const winningColors = getNumberProperties(winningNumber);
         await supabase.from('game_results').insert({ game_period: gameState.current_period, result_number: winningNumber });
-        
+
         for (const bet of bets) {
             let payout = 0; let status = 'lost';
             if (bet.bet_on == winningNumber.toString() || winningColors.includes(bet.bet_on)) {
@@ -385,7 +441,7 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
         if (timeLeft <= (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
             return res.status(400).json({ error: 'Betting window is closed for this round.' });
         }
-        
+
         const { data: betResult, error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: req.user.id, p_amount: amount });
         if (betError || !betResult) { return res.status(400).json({ error: 'Insufficient balance.' }); }
 
@@ -398,6 +454,7 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to place bet.' });
     }
 });
+
 
 // ==========================================
 // ========== ADMIN API ENDPOINTS ===========
@@ -426,23 +483,14 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
         if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
 
-        // Increment the user's balance by the recharge amount
-        // Ensure you have the 'increment_user_balance' function created in Supabase
         const { error: balanceUpdateError } = await supabase.rpc('increment_user_balance', {
             p_user_id: recharge.user_id,
             p_amount: recharge.amount
         });
-        if (balanceUpdateError) {
-            console.error("Error incrementing user balance:", balanceUpdateError);
-            throw balanceUpdateError; // Propagate error if balance update fails
-        }
+        if (balanceUpdateError) throw balanceUpdateError;
 
-        // Update the recharge status to approved
         const { error: updateRechargeError } = await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
-        if (updateRechargeError) {
-            console.error("Error updating recharge status:", updateRechargeError);
-            throw updateRechargeError; // Propagate error if status update fails
-        }
+        if (updateRechargeError) throw updateRechargeError;
 
         res.json({ message: 'Deposit approved successfully and balance updated.' });
     } catch (err) {
@@ -457,7 +505,6 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
         await supabase.from('recharges').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Deposit rejected successfully.' });
     } catch (err) {
-        console.error("Reject Deposit Error:", err);
         res.status(500).json({ error: 'Failed to reject deposit.' });
     }
 });
@@ -465,10 +512,19 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
     try {
         const { id } = req.params;
+        const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
+        if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
+        if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal is not pending.' });
+
+        // ✅ FIXED: Actually deduct the amount from the user's wallet on approval
+        const { error: deductError } = await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
+        if (deductError) {
+             return res.status(400).json({ error: 'Failed to deduct balance. User may have insufficient funds.' });
+        }
+        
         await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Withdrawal approved successfully.' });
     } catch (err) {
-        console.error("Approve Withdrawal Error:", err);
         res.status(500).json({ error: 'Failed to approve withdrawal.' });
     }
 });
@@ -477,16 +533,15 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     try {
         const { id } = req.params;
         const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
-        if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.'});
+        if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
         if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal is not pending.' });
-        
+
         // Refund the amount to the user's wallet
         await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
         await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
-        
+
         res.json({ message: 'Withdrawal rejected and refunded successfully.' });
     } catch (err) {
-        console.error("Reject Withdrawal Error:", err);
         res.status(500).json({ error: 'Failed to reject withdrawal.' });
     }
 });
@@ -497,9 +552,9 @@ app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, re
         if (error) throw error;
         for (const investment of activeInvestments) {
             if (investment.product_plans) {
-                 await supabase.rpc('increment_user_withdrawable_wallet', { 
-                    p_user_id: investment.user_id, 
-                    p_amount: investment.product_plans.daily_income 
+                await supabase.rpc('increment_user_withdrawable_wallet', {
+                    p_user_id: investment.user_id,
+                    p_amount: investment.product_plans.daily_income
                 });
             }
         }
@@ -530,10 +585,10 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     }
 });
 
-app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => { 
+app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     try { const { data, error } = await supabase.from('game_state').select('*').single(); if (error) throw error; res.json({ status: data }); } catch (err) { res.status(500).json({ error: 'Failed to fetch game status.' }); }
 });
-app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => { 
+app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     const { is_on, mode } = req.body;
     const updateData = {};
     if (typeof is_on === 'boolean') updateData.is_on = is_on;
@@ -541,7 +596,7 @@ app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
     try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Game status updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update game status.' }); }
 });
-app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => { 
+app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => {
     const { maintenance_mode, whitelisted_users } = req.body;
     const updateData = {};
     if (typeof maintenance_mode === 'boolean') updateData.maintenance_mode = maintenance_mode;
@@ -549,10 +604,10 @@ app.post('/api/admin/game-maintenance', authenticateAdmin, async (req, res) => {
     if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid data provided.' });
     try { const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); if (error) throw error; res.json({ message: 'Maintenance settings updated.', status: data }); } catch (err) { res.status(500).json({ error: 'Failed to update maintenance settings.' }); }
 });
-app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => { 
-    try { await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); res.json({ message: 'Next result set.' }); } catch(err) { res.status(500).json({ error: 'Failed to set next result.' }); }
+app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
+    try { await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); res.json({ message: 'Next result set.' }); } catch (err) { res.status(500).json({ error: 'Failed to set next result.' }); }
 });
-app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => { 
+app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     try {
         const { data: gameState } = await supabase.from('game_state').select('current_period').single();
         const { data: bets } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
@@ -562,58 +617,6 @@ app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Failed to fetch current bets.' }); }
 });
 
-// API for purchasing a plan
-app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
-    const { planId, price, dailyIncome, durationDays, totalReturn, name } = req.body;
-    if (!planId || !price || !dailyIncome || !durationDays || !totalReturn || !name) {
-        return res.status(400).json({ error: 'Missing plan details.' });
-    }
-
-    try {
-        const userId = req.user.id;
-        const { data: user, error: userError } = await supabase.from('users').select('balance').eq('id', userId).single();
-        if (userError || !user) throw userError || new Error('User not found.');
-
-        if (user.balance < price) {
-            return res.status(400).json({ error: 'Insufficient balance to purchase this plan.' });
-        }
-
-        // Deduct the plan price from the user's balance
-        const { error: deductError } = await supabase.rpc('decrement_user_balance', { p_user_id: userId, p_amount: price });
-        if (deductError) throw deductError;
-
-        // Record the investment
-        const { data: newInvestment, error: investmentError } = await supabase.from('investments').insert([
-            {
-                user_id: userId,
-                plan_id: planId,
-                plan_name: name,
-                amount_invested: price,
-                daily_return: dailyIncome,
-                duration_days: durationDays,
-                expected_total_return: totalReturn,
-                start_date: new Date().toISOString(),
-                status: 'active'
-            }
-        ]).select().single();
-
-        if (investmentError) {
-            // If recording investment fails, try to refund the user's balance
-            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
-            throw investmentError;
-        }
-
-        res.json({ message: 'Plan purchased successfully!', investment: newInvestment });
-
-    } catch (error) {
-        console.error('Plan purchase error:', error);
-        if (error.message && error.message.includes('Insufficient balance')) {
-            return res.status(400).json({ error: error.message });
-        }
-        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
-    }
-});
-
 
 // ==========================================
 // ============== SERVER START ==============
@@ -621,4 +624,3 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
-
