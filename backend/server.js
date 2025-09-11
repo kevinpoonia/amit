@@ -207,16 +207,34 @@ app.post('/api/withdraw', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ --- THIS ENDPOINT IS THE FIX ---
+// This new version is simpler and more robust, preventing the crash.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('investments').select('*, product_plans(*)').eq('user_id', req.user.id);
+        const { data, error } = await supabase
+            .from('investments')
+            .select('id, plan_name, amount, status, days_left') // Select specific, needed columns
+            .eq('user_id', req.user.id)
+            .order('created_at', { ascending: false }); // Show newest first
+
         if (error) throw error;
+        
         res.json({ investments: data });
+    } catch (error)
+        );
+
+        if (investmentError) {
+            console.error('Investment Insert Error:', investmentError);
+            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
+            throw new Error('Failed to record investment after purchase.');
+        }
+
+        res.json({ message: 'Plan purchased successfully!' });
     } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch investments.' });
+        console.error('Plan purchase error:', error.message);
+        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
     }
 });
-
 app.get('/api/bet-history', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase.from('bets').select('*').eq('user_id', req.user.id).order('created_at', { ascending: false }).limit(50);
