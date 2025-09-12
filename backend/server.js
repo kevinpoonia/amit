@@ -191,16 +191,66 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 //     }
 // });
 
+// ✅ NEW: Endpoint to fetch all user notifications and unread promotions
 app.get('/api/notifications', authenticateToken, async (req, res) => {
     try {
-        const { data: newRecharges, error } = await supabase.from('recharges').select('id, amount').eq('user_id', req.user.id).eq('status', 'approved').eq('seen_by_user', false);
-        if (error) throw error;
-        const notifications = newRecharges.map(r => ({ id: `recharge-${r.id}`, type: 'deposit_approved', message: `Your deposit of ₹${r.amount.toLocaleString()} has been approved!` }));
-        res.json({ notifications });
+        const userId = req.user.id;
+        const [
+            { data: userNotifications, error: userNotifError },
+            { data: promotions, error: promoError }
+        ] = await Promise.all([
+            supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
+            supabase.from('promotions').select('*').order('created_at', { ascending: false }).limit(5) // Get latest 5 promotions
+        ]);
+
+        if (userNotifError || promoError) throw userNotifError || promoError;
+
+        res.json({
+            userNotifications: userNotifications || [],
+            promotions: promotions || []
+        });
     } catch (error) {
+        console.error("Error fetching notifications:", error);
         res.status(500).json({ error: 'Failed to fetch notifications.' });
     }
 });
+
+// ✅ NEW: Endpoint to mark notifications as read
+app.post('/api/notifications/read', authenticateToken, async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'An array of notification IDs is required.' });
+    }
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .update({ is_read: true })
+            .in('id', ids)
+            .eq('user_id', req.user.id);
+        
+        if (error) throw error;
+        res.json({ message: 'Notifications marked as read.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to mark notifications as read.' });
+    }
+});
+
+// ✅ NEW: Endpoint to delete all read notifications
+app.post('/api/notifications/delete-read', authenticateToken, async (req, res) => {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .delete()
+            .eq('user_id', req.user.id)
+            .eq('is_read', true);
+
+        if (error) throw error;
+        res.json({ message: 'Read notifications deleted.' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete read notifications.' });
+    }
+});
+
 
 app.post('/api/recharge', authenticateToken, async (req, res) => {
     const { amount, utr } = req.body;
@@ -611,6 +661,12 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
             p_user_id: recharge.user_id,
             p_amount: recharge.amount
         });
+         // Create notification
+        await supabase.from('notifications').insert({
+            user_id: recharge.user_id,
+            type: 'deposit',
+            message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved and added to your balance.`
+        });
         if (balanceUpdateError) throw balanceUpdateError;
 
         const { error: updateRechargeError } = await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
@@ -646,6 +702,13 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
         }
         
         await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
+        // Create notification
+        await supabase.from('notifications').insert({
+            user_id: withdrawal.user_id,
+            type: 'withdrawal',
+            message: `Your withdrawal request of ₹${withdrawal.amount.toLocaleString()} has been approved.`
+        });
+
         res.json({ message: 'Withdrawal approved successfully.' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to approve withdrawal.' });
@@ -732,6 +795,37 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
     }
 });
 
+// ✅ UPDATED: Setting user status now creates a notification
+app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
+    const { userId, status } = req.body;
+    if (!userId || !['active', 'non-active', 'flagged'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid user ID or status provided.' });
+    }
+    try {
+        await supabase.from('users').update({ status }).eq('id', userId);
+        
+        let notificationMessage = '';
+        if (status === 'non-active') {
+            notificationMessage = "Your account has been marked as non-active due to suspicious activity. Please contact support.";
+        } else if (status === 'flagged') {
+            notificationMessage = "Your account has been flagged for violating community rules. Please contact support.";
+        }
+
+        if (notificationMessage) {
+            await supabase.from('notifications').insert({
+                user_id: userId,
+                type: 'status_change',
+                message: notificationMessage
+            });
+        }
+        
+        res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update user status.' });
+    }
+});
+
+// ✅ NEW: Endpoint to grant bonuses and create notifications
 app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     const { amount, reason, user_ids } = req.body;
     if (!amount || amount <= 0 || !reason) { return res.status(400).json({ error: 'Amount and reason are required.' }); }
@@ -743,16 +837,40 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
             const { data: allUsers } = await supabase.from('users').select('id');
             targetUsers = allUsers.map(u => u.id);
         }
+
+        const notifications = [];
         for (const userId of targetUsers) {
             await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: userId, p_amount: amount });
-            await supabase.from('balance_adjustments').insert([{ user_id: userId, amount, reason, admin_id: req.user.id }]);
+            notifications.push({
+                user_id: userId,
+                type: 'bonus',
+                message: `You have received a bonus of ₹${amount.toLocaleString()}! Reason: ${reason}`
+            });
         }
-        res.json({ message: `Bonus of ${amount} granted to ${targetUsers.length} users.` });
+        
+        await supabase.from('notifications').insert(notifications);
+
+        res.json({ message: `Bonus of ₹${amount} granted to ${targetUsers.length} users.` });
     } catch (err) {
+        console.error("Grant Bonus Error:", err);
         res.status(500).json({ error: 'Failed to grant bonus.' });
     }
 });
 
+// ✅ NEW: Endpoint to create a global promotion message
+app.post('/api/admin/create-promotion', authenticateAdmin, async (req, res) => {
+    const { title, message } = req.body;
+    if (!title || !message) {
+        return res.status(400).json({ error: 'Title and message are required for a promotion.' });
+    }
+    try {
+        const { error } = await supabase.from('promotions').insert({ title, message });
+        if (error) throw error;
+        res.json({ message: 'Promotion created successfully and will be visible to all users.' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create promotion.' });
+    }
+});
 app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, res) => {
     try {
         const { data: appState, error: stateError } = await supabase.from('game_state').select('last_income_distribution').single();
