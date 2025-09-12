@@ -431,6 +431,61 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
     }
 });
 
+app.get('/api/data', authenticateToken, async (req, res) => {
+    try {
+        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url').eq('id', req.user.id).single();
+        if (error) throw error;
+        res.json({ user });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch user data' });
+    }
+});
+
+app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+    try {
+        const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet, todays_income').eq('id', req.user.id).single();
+        if (error) throw error;
+        res.json({ 
+            balance: user.balance, 
+            withdrawable_wallet: user.withdrawable_wallet, 
+            todaysIncome: user.todays_income 
+        });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch financial summary' });
+    }
+});
+
+app.get('/api/investments', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('investments')
+            .select('id, plan_name, amount, status, days_left')
+            .eq('user_id', req.user.id)
+            .order('start_date', { ascending: false });
+        if (error) throw error;
+        res.json({ investments: data });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch user investments.' });
+    }
+});
+
+app.post('/api/claim-income', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    try {
+        const { data, error } = await supabase.rpc('claim_daily_income', { p_user_id: userId });
+        if (error) throw error;
+
+        if (data > 0) {
+            res.json({ message: `Successfully claimed ₹${data}. It has been added to your withdrawable balance.` });
+        } else {
+            res.status(400).json({ error: 'No income to claim or an error occurred.' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to claim income.' });
+    }
+});
+
+
 
 // ==========================================
 // ========== ADMIN API ENDPOINTS ===========
@@ -555,6 +610,70 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to grant bonus.' });
     }
 });
+
+app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: appState, error: stateError } = await supabase.from('game_state').select('last_income_distribution').single();
+        if (stateError) throw stateError;
+
+        if (appState.last_income_distribution) {
+            const lastTime = new Date(appState.last_income_distribution).getTime();
+            const now = new Date().getTime();
+            if (now - lastTime < 24 * 60 * 60 * 1000) {
+                return res.status(429).json({ error: 'Income can only be distributed once every 24 hours.' });
+            }
+        }
+        
+        const { data: updatedUsers, error: rpcError } = await supabase.rpc('distribute_income_to_all_active_users');
+        if (rpcError) throw rpcError;
+
+        await supabase.from('game_state').update({ last_income_distribution: new Date().toISOString() }).eq('id', 1);
+
+        res.json({ message: `Successfully distributed daily income to ${updatedUsers} users.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to distribute daily income.' });
+    }
+});
+
+app.post('/api/admin/distribute-income-custom', authenticateAdmin, async (req, res) => {
+    const { user_ids } = req.body;
+    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
+        return res.status(400).json({ error: 'Please provide a valid array of user IDs.' });
+    }
+    try {
+        const { data: updatedCount, error: rpcError } = await supabase.rpc('distribute_income_to_specific_users', { p_user_ids: user_ids });
+        if (rpcError) throw rpcError;
+        res.json({ message: `Successfully distributed income to ${updatedCount} specified users.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to distribute custom income.' });
+    }
+});
+
+app.get('/api/admin/income-distribution-status', authenticateAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('game_state').select('last_income_distribution').single();
+        if (error) throw error;
+        res.json({ lastDistribution: data.last_income_distribution });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get status.' });
+    }
+});
+
+app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) => {
+    const { userId, status } = req.body;
+    const validStatuses = ['active', 'non-active', 'flagged'];
+    if (!userId || !status || !validStatuses.includes(status)) {
+        return res.status(400).json({ error: 'Invalid user ID or status provided.' });
+    }
+    try {
+        const { error } = await supabase.from('users').update({ status }).eq('id', userId);
+        if (error) throw error;
+        res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update status.' });
+    }
+});
+
 
 // ==========================================
 // ========== ADMIN GAME API ENDPOINTS ===========
@@ -697,6 +816,23 @@ app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) 
     }
 });
 
+// ==========================================
+// ========== DAILY SCHEDULED TASK ==========
+// ==========================================
+async function dailyInvestmentUpdate() {
+    console.log('Running daily investment update...');
+    try {
+        const { data, error } = await supabase.rpc('update_daily_investments');
+        if (error) throw error;
+        console.log(`Daily investment update complete. ${data} investments processed.`);
+    } catch (error) {
+        console.error('Error running daily investment update:', error);
+    }
+}
+
+// Run the task once on server start, then every 24 hours
+dailyInvestmentUpdate();
+setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
 
 // ==========================================
 // ============== SERVER START ==============
