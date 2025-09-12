@@ -270,31 +270,41 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ UPDATED: Withdraw endpoint now uses the new database function
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
     const { amount, method, details } = req.body;
-    if (!amount || amount < 100 || !method || !details) {
-        return res.status(400).json({ error: 'Invalid withdrawal details. Minimum is ₹100.' });
+    if (!amount || !method || !details) {
+        return res.status(400).json({ error: "Amount, method, and details are required." });
     }
     try {
-        const userId = req.user.id;
-        const { data: user, error: userError } = await supabase.from('users').select('withdrawable_wallet').eq('id', userId).single();
-        if (userError || !user) {
-            return res.status(404).json({ error: 'User not found.' });
+        const { data, error } = await supabase.rpc('request_withdrawal', {
+            p_user_id: req.user.id,
+            p_amount: amount,
+            p_method: method,
+            p_details: details
+        });
+
+        if (error) throw error;
+        
+        const result = data[0];
+        if (!result.success) {
+            return res.status(400).json({ error: result.message });
         }
-        if (user.withdrawable_wallet < amount) {
-            return res.status(400).json({ error: 'Insufficient withdrawable balance.' });
-        }
-        const { error } = await supabase.from('withdrawals').insert([{ user_id: userId, amount, method, details, status: 'pending' }]);
-        if (error) {
-            console.error('Withdrawal request error:', error);
-            throw new Error('Failed to create withdrawal request.');
-        }
-        res.json({ message: 'Withdrawal request submitted successfully.' });
+
+        // Create a notification for the successful request
+        await supabase.from('notifications').insert({
+            user_id: req.user.id,
+            type: 'withdrawal',
+            message: `Your withdrawal request of ₹${amount.toLocaleString()} has been submitted successfully.`
+        });
+
+        res.json({ message: result.message });
     } catch (error) {
-        console.error("Withdrawal submission error:", error);
+        console.error("Withdrawal API Error:", error);
         res.status(500).json({ error: 'Failed to submit withdrawal request.' });
     }
 });
+
 
 app.get('/api/product-plans', authenticateToken, async (req, res) => {
     try {
@@ -307,6 +317,12 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
+    const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
+        if (userError) throw userError;
+
+        if (['flagged', 'non-active'].includes(user.status)) {
+            return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
+        }
     const { id, price, name, durationDays } = req.body;
     if (!id || !price || !name || !durationDays) {
         return res.status(400).json({ error: 'Missing required plan details.' });
@@ -527,6 +543,13 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/bet', authenticateToken, async (req, res) => {
+    const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
+        if (userError) throw userError;
+
+        if (['flagged', 'non-active'].includes(user.status)) {
+            return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
+        }
+    
     const { amount, bet_on } = req.body;
     if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
     
