@@ -157,12 +157,21 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+// ✅ UPDATED: Login now creates a welcome notification
 app.post('/api/login', async (req, res) => {
     const { mobile, password } = req.body;
     if (!mobile || !password) { return res.status(400).json({ error: 'Mobile and password are required' }); }
     try {
         const { data: user, error } = await supabase.from('users').select('*').eq('mobile', mobile).single();
         if (error || !user || user.password !== password) { return res.status(400).json({ error: 'Invalid credentials' }); }
+        
+        // Create welcome notification
+        await supabase.from('notifications').insert({
+            user_id: user.id,
+            type: 'welcome',
+            message: 'Welcome back! Ready to earn more and make your money work for you?'
+        });
+
         const token = jwt.sign({ id: user.id, name: user.name, is_admin: user.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.json({ message: 'Login successful', token });
     } catch (error) {
@@ -191,24 +200,16 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 //     }
 // });
 
-// ✅ NEW: Endpoint to fetch all user notifications and unread promotions
+// ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.id;
-        const [
-            { data: userNotifications, error: userNotifError },
-            { data: promotions, error: promoError }
-        ] = await Promise.all([
-            supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false }),
-            supabase.from('promotions').select('*').order('created_at', { ascending: false }).limit(5) // Get latest 5 promotions
-        ]);
-
-        if (userNotifError || promoError) throw userNotifError || promoError;
-
-        res.json({
-            userNotifications: userNotifications || [],
-            promotions: promotions || []
-        });
+        const { data, error } = await supabase
+            .from('notifications')
+            .select('*')
+            .eq('user_id', req.user.id)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        res.json({ userNotifications: data || [] });
     } catch (error) {
         console.error("Error fetching notifications:", error);
         res.status(500).json({ error: 'Failed to fetch notifications.' });
