@@ -116,7 +116,7 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url').eq('id', req.user.id).single();
+        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url,status').eq('id', req.user.id).single();
         if (error) return res.status(404).json({ error: 'User not found for this session.' });
         res.json({ user });
     } catch (error) {
@@ -221,9 +221,15 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ FIX: This endpoint now uses 'created_at' for investments
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('investments').select('id, plan_name, amount, status, days_left').eq('user_id', req.user.id).order('start_date', { ascending: false }); // ✅ FIX: Use start_date
+        const { data, error } = await supabase
+            .from('investments')
+            .select('id, plan_name, amount, status, days_left')
+            .eq('user_id', req.user.id)
+            .order('created_at', { ascending: false }); // Use 'created_at' instead of 'start_date'
+
         if (error) throw error;
         res.json({ investments: data });
     } catch (error) {
@@ -232,11 +238,11 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ FIX: This endpoint is now corrected
+
+// ✅ FIX: This endpoint now uses 'created_at' for investments
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
-        // Destructure data directly into variables
         const [
             { data: recharges, error: rechargeError },
             { data: withdrawals, error: withdrawalError },
@@ -245,21 +251,18 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
         ] = await Promise.all([
             supabase.from('recharges').select('id, amount, status, created_at').eq('user_id', userId).eq('status', 'approved'),
             supabase.from('withdrawals').select('id, amount, status, created_at').eq('user_id', userId),
-            supabase.from('investments').select('id, amount, plan_name, start_date').eq('user_id', userId),
+            supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId), // Use 'created_at'
             supabase.from('bets').select('id, amount, payout, status, created_at').eq('user_id', userId)
         ]);
-        
+
         if (rechargeError || withdrawalError || investmentError || betError) {
-            console.error({ rechargeError, withdrawalError, investmentError, betError });
-            throw new Error('Failed to fetch some transaction data.');
+             throw new Error('Failed to fetch some transaction data.');
         }
 
         const formattedTransactions = [];
-        
-        // Use (variable || []) to safely handle cases where data might be null
         (recharges || []).forEach(r => formattedTransactions.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: 'Completed', date: r.created_at, description: `Recharge successful` }));
         (withdrawals || []).forEach(w => formattedTransactions.push({ id: `wd-${w.id}`, type: 'Withdrawal', amount: -w.amount, status: w.status.charAt(0).toUpperCase() + w.status.slice(1), date: w.created_at, description: `Withdrawal request` }));
-        (investments || []).forEach(i => formattedTransactions.push({ id: `inv-${i.id}`, type: 'Plan Purchase', amount: -i.amount, status: 'Completed', date: i.start_date, description: i.plan_name }));
+        (investments || []).forEach(i => formattedTransactions.push({ id: `inv-${i.id}`, type: 'Plan Purchase', amount: -i.amount, status: 'Completed', date: i.created_at, description: i.plan_name })); // Use 'created_at'
         (bets || []).forEach(b => {
             formattedTransactions.push({ id: `bet-${b.id}`, type: 'Game Bet', amount: -b.amount, status: b.status.charAt(0).toUpperCase() + b.status.slice(1), date: b.created_at });
             if (b.payout > 0) {
@@ -275,7 +278,6 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch transaction history.' });
     }
 });
-
 
 app.get('/api/fake-withdrawals', (req, res) => {
     const names = ["Rahul S.", "Priya P.", "Amit K.", "Sneha G.", "Vikas S.", "Pooja V."];
