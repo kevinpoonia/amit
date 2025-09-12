@@ -651,31 +651,24 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
 
+// ✅ UPDATED: Approving a deposit now creates a notification
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
+    const { id } = req.params;
     try {
-        const { id } = req.params;
         const { data: recharge, error: fetchError } = await supabase.from('recharges').select('*').eq('id', id).single();
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
-        if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
 
-        const { error: balanceUpdateError } = await supabase.rpc('increment_user_balance', {
-            p_user_id: recharge.user_id,
-            p_amount: recharge.amount
-        });
-         // Create notification
+        await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
+        await supabase.from('recharges').update({ status: 'approved' }).eq('id', id);
+
         await supabase.from('notifications').insert({
             user_id: recharge.user_id,
             type: 'deposit',
-            message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved and added to your balance.`
+            message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved.`
         });
-        if (balanceUpdateError) throw balanceUpdateError;
 
-        const { error: updateRechargeError } = await supabase.from('recharges').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
-        if (updateRechargeError) throw updateRechargeError;
-
-        res.json({ message: 'Deposit approved successfully and balance updated.' });
+        res.json({ message: 'Deposit approved and notification sent.' });
     } catch (err) {
-        console.error("Failed to approve deposit:", err);
         res.status(500).json({ error: 'Failed to approve deposit.' });
     }
 });
@@ -690,27 +683,23 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
     }
 });
 
+// ✅ UPDATED: Approving a withdrawal now creates a notification
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
+    const { id } = req.params;
     try {
-        const { id } = req.params;
         const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
-        if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal is not pending.' });
-        
-        const { error: deductError } = await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
-        if (deductError) {
-             return res.status(400).json({ error: 'Failed to deduct balance. User may have insufficient funds.' });
-        }
-        
-        await supabase.from('withdrawals').update({ status: 'approved', processed_date: new Date().toISOString() }).eq('id', id);
-        // Create notification
+
+        await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
+        await supabase.from('withdrawals').update({ status: 'approved' }).eq('id', id);
+
         await supabase.from('notifications').insert({
             user_id: withdrawal.user_id,
             type: 'withdrawal',
-            message: `Your withdrawal request of ₹${withdrawal.amount.toLocaleString()} has been approved.`
+            message: `Your withdrawal of ₹${withdrawal.amount.toLocaleString()} has been approved.`
         });
 
-        res.json({ message: 'Withdrawal approved successfully.' });
+        res.json({ message: 'Withdrawal approved and notification sent.' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to approve withdrawal.' });
     }
@@ -809,7 +798,7 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
     }
 });
 
-// ✅ UPDATED: Setting user status now creates a notification
+// ✅ UPDATED: Setting user status now creates the specific notifications you requested
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
     const { userId, status } = req.body;
     if (!userId || !['active', 'non-active', 'flagged'].includes(status)) {
@@ -820,9 +809,9 @@ app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
         
         let notificationMessage = '';
         if (status === 'non-active') {
-            notificationMessage = "Your account has been marked as non-active due to suspicious activity. Please contact support.";
+            notificationMessage = "Your account has been marked as non-active because of suspicious activity on your account.";
         } else if (status === 'flagged') {
-            notificationMessage = "Your account has been flagged for violating community rules. Please contact support.";
+            notificationMessage = "Your account has been marked flagged for violating the rules.";
         }
 
         if (notificationMessage) {
