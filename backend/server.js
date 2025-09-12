@@ -729,11 +729,24 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     }
 });
 
-// ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
+// ✅ THIS IS THE MAIN FIX
 app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').single();
-        if (error) throw error;
+        const { data, error } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').maybeSingle();
+
+        // If we get an error other than "no rows found", it's a real problem.
+        if (error && error.code !== 'PGRST116') {
+            throw error;
+        }
+
+        // If no record exists (data is null), it means the task has never run.
+        // In this case, the admin should be allowed to run it for the first time.
+        if (!data) {
+            return res.json({
+                canDistribute: true,
+                nextDistributionTime: new Date().toISOString()
+            });
+        }
 
         const lastRun = new Date(data.last_run_at);
         const now = new Date();
