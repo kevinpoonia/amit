@@ -69,9 +69,8 @@ cron.schedule('0 0 * * *', async () => {
             });
         }
         
-        // 3. Reset the daily task tracker
-        await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
-
+        // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
+        await supabase.from('daily_profits').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         console.log('Daily cron job completed successfully.');
     } catch (error) {
         console.error('Error in daily cron job:', error);
@@ -279,14 +278,14 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ FIX: This endpoint now correctly orders by 'created_at'
+// ✅ FIX: This endpoint now correctly orders by 'start_date'
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
             .select(`id, plan_name, amount, status, days_left, product_plans(daily_income)`)
             .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
+            .order('start_date', { ascending: false });
 
         if (error) throw error;
         
@@ -301,6 +300,8 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
+
+
 
 
 
@@ -658,10 +659,10 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     }
 });
 
-// ✅ FIX: This is the missing endpoint that caused the 404 error
+// ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
 app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+        const { data, error } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').single();
         if (error) throw error;
 
         const lastRun = new Date(data.last_run_at);
@@ -678,24 +679,19 @@ app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     }
 });
 
-
-// ✅ UPDATED: This endpoint now correctly calculates total daily income before distributing
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
-    const { userId } = req.body; // For distributing to a single user
+    const { userId } = req.body;
     try {
-        // Global distribution cooldown check
         if (!userId) {
-            const { data: task, error: taskError } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
-            if (taskError) throw taskError;
+            // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
+            const { data: task } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').single();
             const lastRun = new Date(task.last_run_at);
             const now = new Date();
-            const nextRun = new Date(lastRun.getTime() + 24 * 60 * 60 * 1000);
-            if (now < nextRun) {
+            if (now.getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
                 return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
             }
         }
 
-        // Base query for active investments
         let query = supabase.from('investments').select('user_id, product_plans(daily_income)').eq('status', 'active');
         if (userId) {
             query = query.eq('user_id', userId);
@@ -704,7 +700,6 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         const { data: activeInvestments, error: fetchError } = await query;
         if (fetchError) throw fetchError;
 
-        // Calculate total income per user
         const incomeDistribution = {};
         for (const investment of activeInvestments) {
             if (investment.product_plans) {
@@ -712,14 +707,13 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
             }
         }
 
-        // Update each user's unclaimed income
         for (const uid in incomeDistribution) {
             await supabase.rpc('increment_unclaimed_income', { p_user_id: parseInt(uid), p_amount: incomeDistribution[uid] });
         }
         
-        // Update the timestamp only for global distribution
         if (!userId) {
-            await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
+             // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
+            await supabase.from('daily_profits').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         }
         
         const message = userId ? `Successfully distributed income to user ${userId}.` : `Daily income distributed to ${Object.keys(incomeDistribution).length} users.`;
@@ -730,7 +724,6 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         res.status(500).json({ error: 'Failed to distribute income.' });
     }
 });
-
 
 app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     const { amount, reason, user_ids } = req.body;
