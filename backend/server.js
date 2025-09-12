@@ -181,15 +181,15 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-    try {
-        const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
-        if (error) return res.status(404).json({ error: 'User not found for this session.' });
-        res.json({ balance: user.balance, withdrawable_wallet: user.withdrawable_wallet, todaysIncome: 0, totalIncome: 0 });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch financial summary' });
-    }
-});
+// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+//     try {
+//         const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
+//         if (error) return res.status(404).json({ error: 'User not found for this session.' });
+//         res.json({ balance: user.balance, withdrawable_wallet: user.withdrawable_wallet, todaysIncome: 0, totalIncome: 0 });
+//     } catch (error) {
+//         res.status(500).json({ error: 'Failed to fetch financial summary' });
+//     }
+// });
 
 app.get('/api/notifications', authenticateToken, async (req, res) => {
     try {
@@ -510,17 +510,22 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This endpoint now correctly returns the user's unclaimed income
+// ✅ UPDATED: This endpoint now calls the new SQL function to get the user's claimable income.
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet, todays_income_unclaimed').eq('id', req.user.id).single();
-        if (error) throw error;
+        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
+        if (userError) throw userError;
+
+        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+        if (rpcError) throw rpcError;
+
         res.json({ 
             balance: user.balance, 
             withdrawable_wallet: user.withdrawable_wallet, 
-            todaysIncome: user.todays_income_unclaimed // This now correctly reflects the value to be claimed
+            todaysIncome: claimableIncome 
         });
     } catch (error) {
+        console.error("Financial Summary Error:", error);
         res.status(500).json({ error: 'Failed to fetch financial summary' });
     }
 });
@@ -556,21 +561,23 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ UPDATED: This endpoint now calls the new SQL function to process the user's claim.
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
-    const userId = req.user.id;
     try {
-        const { data, error } = await supabase.rpc('claim_daily_income', { p_user_id: userId });
+        const { data: claimedAmount, error } = await supabase.rpc('process_user_income_claim', { p_user_id: req.user.id });
         if (error) throw error;
 
-        if (data > 0) {
-            res.json({ message: `Successfully claimed ₹${data}. It has been added to your withdrawable balance.` });
+        if (claimedAmount > 0) {
+            res.json({ message: `Successfully claimed ₹${claimedAmount}. It has been added to your withdrawable balance.` });
         } else {
-            res.status(400).json({ error: 'No income to claim or an error occurred.' });
+            res.status(400).json({ error: 'You have no income to claim at this time.' });
         }
     } catch (error) {
-        res.status(500).json({ error: 'Failed to claim income.' });
+        console.error('Claim income error:', error);
+        res.status(500).json({ error: 'Failed to claim income. An error occurred on the server.' });
     }
 });
+
 
 
 
@@ -806,6 +813,46 @@ app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) =>
         res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update status.' });
+    }
+});
+
+// ✅ NEW: Endpoint to get a user's income eligibility status.
+app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .select('name, can_receive_income')
+            .eq('id', userId)
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') return res.status(404).json({ error: 'User not found.' });
+            throw error;
+        }
+        res.json(data);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to fetch user's income status." });
+    }
+});
+
+// ✅ NEW: Endpoint for admins to allow or block a user's income.
+app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) => {
+    const { userId, canReceiveIncome } = req.body;
+    if (!userId || typeof canReceiveIncome !== 'boolean') {
+        return res.status(400).json({ error: 'Valid User ID and a boolean status are required.' });
+    }
+    try {
+        const { error } = await supabase
+            .from('users')
+            .update({ can_receive_income: canReceiveIncome })
+            .eq('id', userId);
+
+        if (error) throw error;
+        const action = canReceiveIncome ? 'enabled' : 'disabled';
+        res.json({ message: `Successfully ${action} income for User ID: ${userId}.` });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to update user income status.' });
     }
 });
 
