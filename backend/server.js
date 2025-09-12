@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
+const cron = require('node-cron'); // ✅ FIX: This line was missing
 
 // Load environment variables
 dotenv.config();
@@ -507,30 +508,48 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ UPDATED: This endpoint now correctly returns the user's unclaimed income
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet, todays_income').eq('id', req.user.id).single();
+        const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet, todays_income_unclaimed').eq('id', req.user.id).single();
         if (error) throw error;
         res.json({ 
             balance: user.balance, 
             withdrawable_wallet: user.withdrawable_wallet, 
-            todaysIncome: user.todays_income 
+            todaysIncome: user.todays_income_unclaimed // This now correctly reflects the value to be claimed
         });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch financial summary' });
     }
 });
 
+// ✅ UPDATED: This endpoint now correctly joins with product_plans to get daily_income
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
-            .select('id, plan_name, amount, status, days_left')
+            .select(`
+                id,
+                plan_name,
+                amount,
+                status,
+                days_left,
+                product_plans ( daily_income )
+            `)
             .eq('user_id', req.user.id)
-            .order('start_date', { ascending: false });
+            .order('created_at', { ascending: false });
+
         if (error) throw error;
-        res.json({ investments: data });
+        
+        // Flatten the nested product_plans object for easier frontend use
+        const formattedData = data.map(inv => ({
+            ...inv,
+            daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
+        }));
+
+        res.json({ investments: formattedData });
     } catch (error) {
+        console.error("Failed to fetch investments:", error);
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
@@ -638,39 +657,45 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     }
 });
 
+// ✅ UPDATED: This endpoint now correctly calculates total daily income before distributing
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
-    const { userId } = req.body;
+    const { userId } = req.body; // For distributing to a single user
     try {
-        if (!userId) { // Global distribution logic
-            const { data: task } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+        // Global distribution cooldown check
+        if (!userId) {
+            const { data: task, error: taskError } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+            if (taskError) throw taskError;
             const lastRun = new Date(task.last_run_at);
             const now = new Date();
-            const nextRun = new Date(lastRun);
-            nextRun.setDate(lastRun.getDate() + 1);
+            const nextRun = new Date(lastRun.getTime() + 24 * 60 * 60 * 1000);
             if (now < nextRun) {
-                return res.status(400).json({ error: `You can only distribute globally once every 24 hours. Next available at: ${nextRun.toLocaleString()}` });
+                return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
             }
         }
 
-        let query = supabase.from('investments').select('user_id, plan_id').eq('status', 'active');
+        // Base query for active investments
+        let query = supabase.from('investments').select('user_id, product_plans(daily_income)').eq('status', 'active');
         if (userId) {
             query = query.eq('user_id', userId);
         }
+        
         const { data: activeInvestments, error: fetchError } = await query;
         if (fetchError) throw fetchError;
 
+        // Calculate total income per user
         const incomeDistribution = {};
         for (const investment of activeInvestments) {
-            const { data: plan } = await supabase.from('product_plans').select('daily_income').eq('id', investment.plan_id).single();
-            if (plan) {
-                incomeDistribution[investment.user_id] = (incomeDistribution[investment.user_id] || 0) + plan.daily_income;
+            if (investment.product_plans) {
+                incomeDistribution[investment.user_id] = (incomeDistribution[investment.user_id] || 0) + investment.product_plans.daily_income;
             }
         }
 
+        // Update each user's unclaimed income
         for (const uid in incomeDistribution) {
             await supabase.rpc('increment_unclaimed_income', { p_user_id: parseInt(uid), p_amount: incomeDistribution[uid] });
         }
-
+        
+        // Update the timestamp only for global distribution
         if (!userId) {
             await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         }
@@ -679,6 +704,7 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         res.json({ message });
 
     } catch (error) {
+        console.error("Distribute income error:", error);
         res.status(500).json({ error: 'Failed to distribute income.' });
     }
 });
