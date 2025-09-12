@@ -279,12 +279,12 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ FIX: This endpoint now uses 'created_at' for investments
+// ✅ FIX: This endpoint now correctly orders by 'created_at'
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
-            .select('id, plan_name, amount, status, days_left, product_plans(daily_income)')
+            .select(`id, plan_name, amount, status, days_left, product_plans(daily_income)`)
             .eq('user_id', req.user.id)
             .order('created_at', { ascending: false });
 
@@ -301,6 +301,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
+
 
 
 
@@ -656,6 +657,27 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
         res.status(500).json({ error: 'Failed to reject withdrawal.' });
     }
 });
+
+// ✅ FIX: This is the missing endpoint that caused the 404 error
+app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+        if (error) throw error;
+
+        const lastRun = new Date(data.last_run_at);
+        const now = new Date();
+        const nextRun = new Date(lastRun.getTime() + 24 * 60 * 60 * 1000);
+
+        res.json({
+            canDistribute: now > nextRun,
+            nextDistributionTime: nextRun.toISOString()
+        });
+    } catch (error) {
+        console.error("Error fetching income status:", error);
+        res.status(500).json({ error: 'Failed to fetch income distribution status.' });
+    }
+});
+
 
 // ✅ UPDATED: This endpoint now correctly calculates total daily income before distributing
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
