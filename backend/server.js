@@ -192,17 +192,25 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet, last_claim_at').eq('id', req.user.id).single();
-        if (userError) throw userError;
-        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-        if (rpcError) throw rpcError;
-        res.json({
-            balance: user.balance,
-            withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: claimableIncome,
+        const { data: user, error } = await supabase
+            .from('users')
+            // Corrected 'todays_income' to 'todays_income_unclaimed'
+            .select('balance, withdrawable_wallet, todays_income_unclaimed, last_claim_at')
+            .eq('id', req.user.id)
+            .single();
+
+        if (error) throw error;
+        
+        res.json({ 
+            balance: user.balance, 
+            withdrawable_wallet: user.withdrawable_wallet, 
+            todaysIncome: user.todays_income_unclaimed,
             lastClaimAt: user.last_claim_at
         });
-    } catch (error) { res.status(500).json({ error: 'Failed to fetch financial summary.' }); }
+    } catch (error) {
+        console.error("Financial Summary Error:", error);
+        res.status(500).json({ error: 'Failed to fetch financial summary' });
+    }
 });
 
 // ✅ NEW: Endpoint to fetch all notifications
@@ -325,9 +333,9 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
-            .select(`id, plan_name, amount, status, days_left, product_plans(daily_income)`)
+            .select(`id, plan_name, amount, status, days_left, created_at, product_plans(daily_income)`)
             .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
+            .order('created_at', { ascending: false }); // Corrected from 'start_date'
 
         if (error) throw error;
         
