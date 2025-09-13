@@ -157,6 +157,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
+
 // ✅ UPDATED: Login now creates a welcome notification
 app.post('/api/login', async (req, res) => {
     const { mobile, password } = req.body;
@@ -165,7 +166,6 @@ app.post('/api/login', async (req, res) => {
         const { data: user, error } = await supabase.from('users').select('*').eq('mobile', mobile).single();
         if (error || !user || user.password !== password) { return res.status(400).json({ error: 'Invalid credentials' }); }
         
-        // Create welcome notification
         await supabase.from('notifications').insert({
             user_id: user.id,
             type: 'welcome',
@@ -182,23 +182,28 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, email, mobile, balance, withdrawable_wallet, is_admin, avatar_url,status').eq('id', req.user.id).single();
-        if (error) return res.status(404).json({ error: 'User not found for this session.' });
+        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url').eq('id', req.user.id).single();
+        if (error) throw error;
         res.json({ user });
     } catch (error) {
         res.status(500).json({ error: 'Failed to fetch user data' });
     }
 });
 
-// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-//     try {
-//         const { data: user, error } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
-//         if (error) return res.status(404).json({ error: 'User not found for this session.' });
-//         res.json({ balance: user.balance, withdrawable_wallet: user.withdrawable_wallet, todaysIncome: 0, totalIncome: 0 });
-//     } catch (error) {
-//         res.status(500).json({ error: 'Failed to fetch financial summary' });
-//     }
-// });
+app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+    try {
+        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet, last_claim_at').eq('id', req.user.id).single();
+        if (userError) throw userError;
+        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+        if (rpcError) throw rpcError;
+        res.json({
+            balance: user.balance,
+            withdrawable_wallet: user.withdrawable_wallet,
+            todaysIncome: claimableIncome,
+            lastClaimAt: user.last_claim_at
+        });
+    } catch (error) { res.status(500).json({ error: 'Failed to fetch financial summary.' }); }
+});
 
 // ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
@@ -216,7 +221,6 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ NEW: Endpoint to mark notifications as read
 app.post('/api/notifications/read', authenticateToken, async (req, res) => {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -236,7 +240,6 @@ app.post('/api/notifications/read', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ NEW: Endpoint to delete all read notifications
 app.post('/api/notifications/delete-read', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase
@@ -324,7 +327,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
             .from('investments')
             .select(`id, plan_name, amount, status, days_left, product_plans(daily_income)`)
             .eq('user_id', req.user.id)
-            .order('start_date', { ascending: false });
+            .order('created_at', { ascending: false });
 
         if (error) throw error;
         
@@ -371,7 +374,7 @@ app.get('/api/bet-history', authenticateToken, async (req, res) => {
             .select('*')
             .eq('user_id', req.user.id)
             .order('created_at', { ascending: false })
-            .limit(100); // Limit to the last 100 bets
+            .limit(100);
 
         if (error) throw error;
         res.json({ history: data || [] });
@@ -512,28 +515,28 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
     res.json({ ...gameState, time_left: timeLeft > 0 ? timeLeft : 0, can_bet: canBet, results });
 });
 
+// ✅ FIX: The two try...catch blocks have been merged to fix the syntax error.
 app.post('/api/bet', authenticateToken, async (req, res) => {
     try {
+        // Step 1: Check user status
         const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
         if (userError) throw userError;
         if (['flagged', 'non-active'].includes(user.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
 
-    
-    const { amount, bet_on } = req.body;
-    if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
-    
-    try {
+        // Step 2: Process the bet
+        const { amount, bet_on } = req.body;
+        if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
+
         const { data: gameState } = await supabase.from('game_state').select('*').single();
-        const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
-        
-        if (timeLeft <= (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
+        const timeLeft = 60 - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
+        if (timeLeft <= (60 - 50)) {
             return res.status(400).json({ error: 'Betting window is closed for this round.' });
         }
 
-        const { data: betResult, error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: req.user.id, p_amount: amount });
-        if (betError || !betResult) { return res.status(400).json({ error: 'Insufficient balance.' }); }
+        const { error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: req.user.id, p_amount: amount });
+        if (betError) { return res.status(400).json({ error: 'Insufficient balance.' }); }
 
         const { error: insertError } = await supabase.from('bets').insert([{ user_id: req.user.id, game_period: gameState.current_period, amount, bet_on }]);
         if (insertError) throw insertError;
