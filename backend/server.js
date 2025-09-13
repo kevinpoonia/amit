@@ -675,15 +675,12 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
-        // Fetch user's own referral code
         const { data: user, error: userError } = await supabase.from('users').select('ip_username').eq('id', userId).single();
         if (userError) throw userError;
 
-        // Fetch Level 1 referrals (users directly referred by the current user)
         const { data: level1Referrals, error: level1Error } = await supabase.from('users').select('id, name').eq('referred_by', userId);
         if (level1Error) throw level1Error;
 
-        // Fetch Level 2 referrals (users referred by Level 1 referrals)
         const level1Ids = level1Referrals.map(u => u.id);
         let level2Referrals = [];
         if (level1Ids.length > 0) {
@@ -692,7 +689,6 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
             level2Referrals = l2Data;
         }
 
-        // Fetch all commissions this user has earned to calculate total rewards
         const { data: commissions, error: commissionError } = await supabase.from('referral_commissions').select('commission_amount').eq('user_id', userId);
         if (commissionError) throw commissionError;
 
@@ -716,7 +712,6 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch referral details.' });
     }
 });
-
 
 
 // ==========================================
