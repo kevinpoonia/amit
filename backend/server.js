@@ -198,32 +198,29 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 });
 
 // // ✅ THIS IS THE CORRECTED ENDPOINT
-// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-//     try {
-//         // Step 1: Fetch the user's basic wallet balances and last claim time.
-//         const { data: user, error: userError } = await supabase
-//             .from('users')
-//             .select('balance, withdrawable_wallet, last_claim_at')
-//             .eq('id', req.user.id)
-//             .single();
-//         if (userError) throw userError;
+// ✅ THIS IS THE CORRECTED ENDPOINT
+app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+    try {
+        // Step 1: Fetch the user's basic wallet balances and last claim time.
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
+            .eq('id', req.user.id)
+            .single();
+        if (userError) throw userError;
 
-//         // Step 2: Call the database function to calculate the user's total claimable income for today.
-//         const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-//         if (rpcError) throw rpcError;
-
-//         // Step 3: Send all the correct data to the frontend.
-//         res.json({
-//             balance: user.balance,
-//             withdrawable_wallet: user.withdrawable_wallet,
-//             todaysIncome: claimableIncome, // This now contains the real calculated amount
-//             lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
-//         });
-//     } catch (error) { 
-//         console.error("Financial Summary Error:", error);
-//         res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
-//     }
-// });
+        // Step 2: Send all the correct data to the frontend.
+        res.json({
+            balance: user.balance,
+            withdrawable_wallet: user.withdrawable_wallet,
+            todaysIncome: user.todays_income_unclaimed,
+            lastClaimAt: user.last_claim_at
+        });
+    } catch (error) { 
+        console.error("Financial Summary Error:", error);
+        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+    }
+});
 
 // ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
@@ -536,6 +533,7 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
 });
 
 // ✅ FIX: The two try...catch blocks have been merged to fix the syntax error.
+// ✅ FIX: The two try...catch blocks have been merged to fix the syntax error.
 app.post('/api/bet', authenticateToken, async (req, res) => {
     try {
         // Step 1: Check user status
@@ -547,12 +545,13 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
 
         // Step 2: Process the bet
         const { amount, bet_on } = req.body;
-        if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
-
+        if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details.' }); }
+        
         const { data: gameState } = await supabase.from('game_state').select('*').single();
         const timeLeft = 60 - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
+        
         if (timeLeft <= (60 - 50)) {
-            return res.status(400).json({ error: 'Betting window is closed for this round.' });
+            return res.status(400).json({ error: 'Betting window is closed.' });
         }
 
         const { error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: req.user.id, p_amount: amount });
@@ -580,32 +579,32 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 
 // ✅ UPDATED: This endpoint now includes the 'last_claim_at' timestamp
 // ✅ THIS IS THE CORRECTED ENDPOINT
-app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-    try {
-        // Step 1: Fetch the user's basic wallet balances and last claim time.
-        const { data: user, error: userError } = await supabase
-            .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at')
-            .eq('id', req.user.id)
-            .single();
-        if (userError) throw userError;
+// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+//     try {
+//         // Step 1: Fetch the user's basic wallet balances and last claim time.
+//         const { data: user, error: userError } = await supabase
+//             .from('users')
+//             .select('balance, withdrawable_wallet, last_claim_at')
+//             .eq('id', req.user.id)
+//             .single();
+//         if (userError) throw userError;
 
-        // Step 2: Call the database function to calculate the user's total claimable income for today.
-        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-        if (rpcError) throw rpcError;
+//         // Step 2: Call the database function to calculate the user's total claimable income for today.
+//         const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+//         if (rpcError) throw rpcError;
 
-        // Step 3: Send all the correct data to the frontend.
-        res.json({
-            balance: user.balance,
-            withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: claimableIncome, // This now contains the real calculated amount
-            lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
-        });
-    } catch (error) { 
-        console.error("Financial Summary Error:", error);
-        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
-    }
-});
+//         // Step 3: Send all the correct data to the frontend.
+//         res.json({
+//             balance: user.balance,
+//             withdrawable_wallet: user.withdrawable_wallet,
+//             todaysIncome: claimableIncome, // This now contains the real calculated amount
+//             lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
+//         });
+//     } catch (error) { 
+//         console.error("Financial Summary Error:", error);
+//         res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+//     }
+// });
 
 
 // ✅ UPDATED: This endpoint now correctly joins with product_plans to get daily_income
