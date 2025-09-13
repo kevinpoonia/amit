@@ -671,7 +671,7 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ NEW: A robust endpoint to get all referral data for the team page.
+// ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -738,7 +738,7 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
 
-// ✅ UPDATED: This endpoint now triggers the referral bonus distribution.
+// ✅ UPDATED: This endpoint now triggers the referral bonus distribution function in the database.
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
     try {
@@ -775,6 +775,7 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         res.status(500).json({ error: 'Failed to approve deposit.' });
     }
 });
+
 
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
     try {
