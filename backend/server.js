@@ -197,28 +197,22 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-// // ✅ THIS IS THE CORRECTED ENDPOINT
-// ✅ THIS IS THE CORRECTED ENDPOINT
-// ... (Your other endpoints like /data, /login, etc.)
 
-// ✅ THIS IS THE CORRECTED ENDPOINT
-// ✅ REPLACE your existing /api/financial-summary endpoint with this
+
+// ✅ THIS IS THE CORRECTED ENDPOINT THAT FIXES THE LOGIN ISSUE
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
         const { data: user, error: userError } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at')
+            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
             .eq('id', req.user.id)
             .single();
         if (userError) throw userError;
 
-        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-        if (rpcError) throw rpcError;
-
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: claimableIncome,
+            todaysIncome: user.todays_income_unclaimed,
             lastClaimAt: user.last_claim_at
         });
     } catch (error) { 
@@ -228,7 +222,7 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
 });
 
 
-// ... (The rest of your server.js file)
+
 
 
 // ✅ NEW: Endpoint to fetch all notifications
