@@ -215,22 +215,19 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // ✅ THIS IS THE CORRECTED ENDPOINT THAT FIXES THE LOGIN ISSUE
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase
+        const { data: user, error } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
+            .select('balance, withdrawable_wallet, todays_income_unclaimed')
             .eq('id', req.user.id)
             .single();
-        if (userError) throw userError;
-
+        if (error) throw error;
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: user.todays_income_unclaimed,
-            lastClaimAt: user.last_claim_at
+            todaysIncome: user.todays_income_unclaimed
         });
-    } catch (error) { 
-        console.error("Financial Summary Error:", error);
-        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch financial summary' });
     }
 });
 
@@ -633,20 +630,17 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Failed to fetch user investments.' }); }
 });
 
-// ✅ UPDATED: This endpoint now uses the new, secure database function
-// ✅ REPLACE your existing /api/claim-income endpoint with this
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        const { data: claimedAmount, error } = await supabase.rpc('process_user_income_claim', { p_user_id: req.user.id });
+        const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', { p_user_id: req.user.id });
         if (error) throw error;
 
         if (claimedAmount > 0) {
-            res.json({ message: `Successfully claimed ₹${claimedAmount}.` });
+            res.json({ message: `Successfully claimed ₹${claimedAmount}. It has been added to your withdrawable balance.` });
         } else {
-            res.status(400).json({ error: 'You have no income to claim at this time or have already claimed today.' });
+            res.status(400).json({ error: 'You have no income to claim at this time.' });
         }
     } catch (error) {
-        console.error('Claim income error:', error);
         res.status(500).json({ error: 'Failed to claim income.' });
     }
 });
@@ -782,32 +776,17 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
 // ✅ THIS IS THE MAIN FIX
 app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').maybeSingle();
-
-        // If we get an error other than "no rows found", it's a real problem.
-        if (error && error.code !== 'PGRST116') {
-            throw error;
-        }
-
-        // If no record exists (data is null), it means the task has never run.
-        // In this case, the admin should be allowed to run it for the first time.
-        if (!data) {
-            return res.json({
-                canDistribute: true,
-                nextDistributionTime: new Date().toISOString()
-            });
-        }
+        const { data, error } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+        if (error) throw error;
 
         const lastRun = new Date(data.last_run_at);
-        const now = new Date();
         const nextRun = new Date(lastRun.getTime() + 24 * 60 * 60 * 1000);
 
         res.json({
-            canDistribute: now > nextRun,
+            canDistribute: new Date() > nextRun,
             nextDistributionTime: nextRun.toISOString()
         });
     } catch (error) {
-        console.error("Error fetching income status:", error);
         res.status(500).json({ error: 'Failed to fetch income distribution status.' });
     }
 });
@@ -816,18 +795,10 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
     const { userId } = req.body;
     try {
         if (!userId) { // Global distribution logic
-            // Use .maybeSingle() to prevent a crash if the record doesn't exist yet.
-            const { data: task, error: taskError } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').maybeSingle();
-            
-            if (taskError && taskError.code !== 'PGRST116') throw taskError;
-
-            // Only check the cooldown if a task record was found.
-            if (task) {
-                const lastRun = new Date(task.last_run_at);
-                const now = new Date();
-                if (now.getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
-                    return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
-                }
+            const { data: task } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+            const lastRun = new Date(task.last_run_at);
+            if (new Date().getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
+                return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
             }
         }
 
@@ -851,7 +822,7 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         }
         
         if (!userId) {
-            await supabase.from('daily_profits').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
+            await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         }
         
         const message = userId ? `Successfully distributed income to user ${userId}.` : `Daily income distributed to ${Object.keys(incomeDistribution).length} users.`;
