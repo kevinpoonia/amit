@@ -601,22 +601,24 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This endpoint now calls the new SQL function to get the user's claimable income.
+// ✅ UPDATED: This endpoint now includes the 'last_claim_at' timestamp
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
-        if (userError) throw userError;
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('balance, withdrawable_wallet, todays_income_unclaimed, last_claim_at')
+            .eq('id', req.user.id)
+            .single();
 
-        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-        if (rpcError) throw rpcError;
-
+        if (error) throw error;
+        
         res.json({ 
             balance: user.balance, 
             withdrawable_wallet: user.withdrawable_wallet, 
-            todaysIncome: claimableIncome 
+            todaysIncome: user.todays_income_unclaimed,
+            lastClaimAt: user.last_claim_at // Send the last claim time to the frontend
         });
     } catch (error) {
-        console.error("Financial Summary Error:", error);
         res.status(500).json({ error: 'Failed to fetch financial summary' });
     }
 });
@@ -652,16 +654,16 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This endpoint now calls the new SQL function to process the user's claim.
+// ✅ UPDATED: This endpoint now uses the new, secure database function
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        const { data: claimedAmount, error } = await supabase.rpc('process_user_income_claim', { p_user_id: req.user.id });
+        const { data: claimedAmount, error } = await supabase.rpc('process_income_claim', { p_user_id: req.user.id });
         if (error) throw error;
 
         if (claimedAmount > 0) {
             res.json({ message: `Successfully claimed ₹${claimedAmount}. It has been added to your withdrawable balance.` });
         } else {
-            res.status(400).json({ error: 'You have no income to claim at this time.' });
+            res.status(400).json({ error: 'You have no income to claim, or you must wait 24 hours since your last claim.' });
         }
     } catch (error) {
         console.error('Claim income error:', error);
@@ -669,6 +671,51 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ NEW: A robust endpoint to get all referral data for the team page.
+app.get('/api/referral-details', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    try {
+        // Fetch user's own referral code
+        const { data: user, error: userError } = await supabase.from('users').select('ip_username').eq('id', userId).single();
+        if (userError) throw userError;
+
+        // Fetch Level 1 referrals (users directly referred by the current user)
+        const { data: level1Referrals, error: level1Error } = await supabase.from('users').select('id, name').eq('referred_by', userId);
+        if (level1Error) throw level1Error;
+
+        // Fetch Level 2 referrals (users referred by Level 1 referrals)
+        const level1Ids = level1Referrals.map(u => u.id);
+        let level2Referrals = [];
+        if (level1Ids.length > 0) {
+            const { data: l2Data, error: level2Error } = await supabase.from('users').select('id, name').in('referred_by', level1Ids);
+            if (level2Error) throw level2Error;
+            level2Referrals = l2Data;
+        }
+
+        // Fetch all commissions this user has earned to calculate total rewards
+        const { data: commissions, error: commissionError } = await supabase.from('referral_commissions').select('commission_amount').eq('user_id', userId);
+        if (commissionError) throw commissionError;
+
+        const totalRewards = commissions.reduce((sum, record) => sum + parseFloat(record.commission_amount), 0);
+
+        res.json({
+            referralLink: `https://amit-sigma.vercel.app/?ref=${user.ip_username}`,
+            totalRewards: totalRewards,
+            level1: {
+                count: level1Referrals.length,
+                users: level1Referrals
+            },
+            level2: {
+                count: level2Referrals.length,
+                users: level2Referrals
+            }
+        });
+
+    } catch (error) {
+        console.error("Error fetching referral details:", error);
+        res.status(500).json({ error: 'Failed to fetch referral details.' });
+    }
+});
 
 
 
@@ -691,24 +738,40 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
 
-// ✅ UPDATED: Approving a deposit now creates a notification
+// ✅ UPDATED: This endpoint now triggers the referral bonus distribution.
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
     try {
         const { data: recharge, error: fetchError } = await supabase.from('recharges').select('*').eq('id', id).single();
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
+        if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
 
+        // Step 1: Update user's balance
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
-        await supabase.from('recharges').update({ status: 'approved' }).eq('id', id);
+        
+        // Step 2: Update recharge status
+        await supabase.from('recharges').update({ status: 'approved', processed_date: new Date() }).eq('id', id);
 
+        // Step 3: Trigger the referral bonus function in the database
+        const { error: referralError } = await supabase.rpc('handle_deposit_referral', {
+            depositing_user_id: recharge.user_id,
+            deposit_id: recharge.id,
+            deposit_amount: recharge.amount
+        });
+        if (referralError) {
+            // Log the error but don't fail the entire request, as the deposit was successful
+            console.error("Referral processing error:", referralError);
+        }
+
+        // Step 4: Create a notification for the user who deposited
         await supabase.from('notifications').insert({
-            user_id: recharge.user_id,
-            type: 'deposit',
+            user_id: recharge.user_id, type: 'deposit',
             message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved.`
         });
 
-        res.json({ message: 'Deposit approved and notification sent.' });
+        res.json({ message: 'Deposit approved, notification sent, and referral bonuses processed.' });
     } catch (err) {
+        console.error("Approve deposit error:", err);
         res.status(500).json({ error: 'Failed to approve deposit.' });
     }
 });
