@@ -199,28 +199,38 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 
 // // ✅ THIS IS THE CORRECTED ENDPOINT
 // ✅ THIS IS THE CORRECTED ENDPOINT
+// ... (Your other endpoints like /data, /login, etc.)
+
+// ✅ THIS IS THE CORRECTED ENDPOINT
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
         // Step 1: Fetch the user's basic wallet balances and last claim time.
         const { data: user, error: userError } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
+            .select('balance, withdrawable_wallet, last_claim_at')
             .eq('id', req.user.id)
             .single();
         if (userError) throw userError;
 
-        // Step 2: Send all the correct data to the frontend.
+        // Step 2: Call the database function to calculate the user's total claimable income for today.
+        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+        if (rpcError) throw rpcError;
+
+        // Step 3: Send all the correct data to the frontend.
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: user.todays_income_unclaimed,
-            lastClaimAt: user.last_claim_at
+            todaysIncome: claimableIncome, // This now contains the real calculated amount
+            lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
         });
     } catch (error) { 
         console.error("Financial Summary Error:", error);
         res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
     }
 });
+
+// ... (The rest of your server.js file)
+
 
 // ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
