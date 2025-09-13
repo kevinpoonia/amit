@@ -370,41 +370,45 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
 
 
 
-
-
-
-// ✅ NEW: Endpoint to fetch a combined transaction history
+// ✅ UPDATED: This endpoint now fetches daily income claims and excludes game bets.
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
+        // Step 1: Fetch all relevant financial data.
+        // 'bets' have been removed and 'daily_claims' has been added.
         const [
-            { data: recharges }, { data: withdrawals }, 
-            { data: investments }, { data: bets }
+            { data: recharges }, 
+            { data: withdrawals }, 
+            { data: investments },
+            { data: dailyClaims } // NEW: Fetching daily income claims
         ] = await Promise.all([
             supabase.from('recharges').select('id, amount, status, created_at').eq('user_id', userId).eq('status', 'approved'),
             supabase.from('withdrawals').select('id, amount, status, created_at').eq('user_id', userId),
             supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId),
-            // supabase.from('bets').select('id, amount, payout, status, created_at').eq('user_id', userId)
+            supabase.from('daily_claims').select('id, amount, created_at').eq('user_id', userId) // NEW
         ]);
 
         const formatted = [];
+        // Step 2: Format each transaction type into a common structure.
         (recharges || []).forEach(r => formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: 'Completed', date: r.created_at }));
         (withdrawals || []).forEach(w => formatted.push({ id: `wd-${w.id}`, type: 'Withdrawal', amount: -w.amount, status: w.status, date: w.created_at }));
         (investments || []).forEach(i => formatted.push({ id: `inv-${i.id}`, type: 'Plan Purchase', amount: -i.amount, status: 'Completed', date: i.created_at, description: i.plan_name }));
-        (bets || []).forEach(b => {
-            formatted.push({ id: `bet-${b.id}`, type: 'Game Bet', amount: -b.amount, status: b.status, date: b.created_at });
-            if (b.payout > 0) {
-                formatted.push({ id: `payout-${b.id}`, type: 'Game Payout', amount: b.payout, status: 'Won', date: b.created_at });
-            }
-        });
         
+        // NEW: Format the daily income claims as positive transactions.
+        (dailyClaims || []).forEach(c => formatted.push({ id: `claim-${c.id}`, type: 'Daily Income', amount: c.amount, status: 'Claimed', date: c.created_at }));
+
+        // REMOVED: The section that formatted bets and payouts has been deleted.
+        
+        // Step 3: Sort all transactions by date, most recent first.
         formatted.sort((a, b) => new Date(b.date) - new Date(a.date));
         res.json({ transactions: formatted });
+
     } catch (error) {
         console.error("Error fetching transactions:", error);
         res.status(500).json({ error: 'Failed to fetch transaction history.' });
     }
 });
+
 
 // ✅ NEW: Endpoint to fetch the user's bet history
 app.get('/api/bet-history', authenticateToken, async (req, res) => {
