@@ -202,21 +202,23 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // ... (Your other endpoints like /data, /login, etc.)
 
 // ✅ THIS IS THE CORRECTED ENDPOINT
+// ✅ REPLACE your existing /api/financial-summary endpoint with this
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        // Step 1: Fetch the user's basic wallet balances and last claim time.
         const { data: user, error: userError } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
+            .select('balance, withdrawable_wallet, last_claim_at')
             .eq('id', req.user.id)
             .single();
         if (userError) throw userError;
 
-        // Step 2: Send all the correct data to the frontend.
+        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+        if (rpcError) throw rpcError;
+
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: user.todays_income_unclaimed,
+            todaysIncome: claimableIncome,
             lastClaimAt: user.last_claim_at
         });
     } catch (error) { 
@@ -625,17 +627,23 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
 });
 
 // ✅ UPDATED: This endpoint now uses the new, secure database function
+// ✅ REPLACE your existing /api/claim-income endpoint with this
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
         const { data: claimedAmount, error } = await supabase.rpc('process_user_income_claim', { p_user_id: req.user.id });
         if (error) throw error;
+
         if (claimedAmount > 0) {
             res.json({ message: `Successfully claimed ₹${claimedAmount}.` });
         } else {
-            res.status(400).json({ error: 'You have no income to claim at this time.' });
+            res.status(400).json({ error: 'You have no income to claim at this time or have already claimed today.' });
         }
-    } catch (error) { res.status(500).json({ error: 'Failed to claim income.' }); }
+    } catch (error) {
+        console.error('Claim income error:', error);
+        res.status(500).json({ error: 'Failed to claim income.' });
+    }
 });
+
 
 // ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
@@ -1027,6 +1035,36 @@ app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) =>
         res.status(500).json({ error: 'Failed to update user income status.' });
     }
 });
+// ✅ ADD this new endpoint for the admin panel's financial overview table
+app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: deposits, error: depError } = await supabase
+            .from('recharges')
+            .select('amount')
+            .eq('status', 'approved');
+        if (depError) throw depError;
+
+        const { data: withdrawals, error: wdError } = await supabase
+            .from('withdrawals')
+            .select('amount')
+            .eq('status', 'approved');
+        if (wdError) throw wdError;
+
+        const totalDeposits = deposits.reduce((sum, d) => sum + d.amount, 0);
+        const totalWithdrawals = withdrawals.reduce((sum, w) => sum + w.amount, 0);
+        const platformPL = totalDeposits - totalWithdrawals;
+
+        res.json({
+            totalDeposits,
+            totalWithdrawals,
+            platformPL
+        });
+    } catch (error) {
+        console.error("Error fetching platform stats:", error);
+        res.status(500).json({ error: 'Failed to fetch platform statistics.' });
+    }
+});
+
 
 
 // ==========================================
