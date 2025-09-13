@@ -273,36 +273,16 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
 // ✅ UPDATED: Withdraw endpoint now uses the new database function
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
     const { amount, method, details } = req.body;
-    if (!amount || !method || !details) {
-        return res.status(400).json({ error: "Amount, method, and details are required." });
-    }
     try {
         const { data, error } = await supabase.rpc('request_withdrawal', {
-            p_user_id: req.user.id,
-            p_amount: amount,
-            p_method: method,
-            p_details: details
+            p_user_id: req.user.id, p_amount: amount, p_method: method, p_details: details
         });
-
         if (error) throw error;
-        
         const result = data[0];
-        if (!result.success) {
-            return res.status(400).json({ error: result.message });
-        }
-
-        // Create a notification for the successful request
-        await supabase.from('notifications').insert({
-            user_id: req.user.id,
-            type: 'withdrawal',
-            message: `Your withdrawal request of ₹${amount.toLocaleString()} has been submitted successfully.`
-        });
-
+        if (!result.success) return res.status(400).json({ error: result.message });
+        await supabase.from('notifications').insert({ user_id: req.user.id, type: 'withdrawal', message: `Your withdrawal request of ₹${amount.toLocaleString()} has been submitted.` });
         res.json({ message: result.message });
-    } catch (error) {
-        console.error("Withdrawal API Error:", error);
-        res.status(500).json({ error: 'Failed to submit withdrawal request.' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to submit withdrawal request.' }); }
 });
 
 
@@ -317,32 +297,24 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
-    const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
+    try {
+        const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
         if (userError) throw userError;
-
         if (['flagged', 'non-active'].includes(user.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
-    const { id, price, name, durationDays } = req.body;
-    if (!id || !price || !name || !durationDays) {
-        return res.status(400).json({ error: 'Missing required plan details.' });
-    }
-    try {
-        const userId = req.user.id;
-        const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { p_user_id: userId, p_amount: price });
+        const { id, price, name, durationDays } = req.body;
+        const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { p_user_id: req.user.id, p_amount: price });
         if (rpcError || !deductionSuccess) {
             return res.status(400).json({ error: 'Insufficient total balance.' });
         }
-        const { error: investmentError } = await supabase.from('investments').insert([{ user_id: userId, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }]);
+        const { error: investmentError } = await supabase.from('investments').insert([{ user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }]);
         if (investmentError) {
-            await supabase.rpc('increment_user_balance', { p_user_id: userId, p_amount: price });
+            await supabase.rpc('increment_user_balance', { p_user_id: req.user.id, p_amount: price });
             throw new Error('Failed to record investment after purchase.');
         }
         res.json({ message: 'Plan purchased successfully!' });
-    } catch (error) {
-        console.error('Plan purchase error:', error.message);
-        res.status(500).json({ error: 'Failed to purchase plan. Please try again.' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); }
 });
 
 // ✅ FIX: This endpoint now correctly orders by 'start_date'
@@ -374,39 +346,20 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
-        // Step 1: Fetch all relevant financial data.
-        // 'bets' have been removed and 'daily_claims' has been added.
-        const [
-            { data: recharges }, 
-            { data: withdrawals }, 
-            { data: investments },
-            { data: dailyClaims } // NEW: Fetching daily income claims
-        ] = await Promise.all([
-            supabase.from('recharges').select('id, amount, status, created_at').eq('user_id', userId).eq('status', 'approved'),
+        const [ { data: recharges }, { data: withdrawals }, { data: investments }, { data: claims } ] = await Promise.all([
+            supabase.from('recharges').select('id, amount, status, created_at').eq('user_id', userId),
             supabase.from('withdrawals').select('id, amount, status, created_at').eq('user_id', userId),
             supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId),
-            supabase.from('daily_claims').select('id, amount, created_at').eq('user_id', userId) // NEW
+            supabase.from('daily_claims').select('id, amount, created_at').eq('user_id', userId)
         ]);
-
         const formatted = [];
-        // Step 2: Format each transaction type into a common structure.
-        (recharges || []).forEach(r => formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: 'Completed', date: r.created_at }));
+        (recharges || []).forEach(r => r.status === 'approved' && formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: 'Completed', date: r.created_at }));
         (withdrawals || []).forEach(w => formatted.push({ id: `wd-${w.id}`, type: 'Withdrawal', amount: -w.amount, status: w.status, date: w.created_at }));
         (investments || []).forEach(i => formatted.push({ id: `inv-${i.id}`, type: 'Plan Purchase', amount: -i.amount, status: 'Completed', date: i.created_at, description: i.plan_name }));
-        
-        // NEW: Format the daily income claims as positive transactions.
-        (dailyClaims || []).forEach(c => formatted.push({ id: `claim-${c.id}`, type: 'Daily Income', amount: c.amount, status: 'Claimed', date: c.created_at }));
-
-        // REMOVED: The section that formatted bets and payouts has been deleted.
-        
-        // Step 3: Sort all transactions by date, most recent first.
+        (claims || []).forEach(c => formatted.push({ id: `claim-${c.id}`, type: 'Daily Income', amount: c.amount, status: 'Claimed', date: c.created_at }));
         formatted.sort((a, b) => new Date(b.date) - new Date(a.date));
         res.json({ transactions: formatted });
-
-    } catch (error) {
-        console.error("Error fetching transactions:", error);
-        res.status(500).json({ error: 'Failed to fetch transaction history.' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to fetch transaction history.' }); }
 });
 
 
@@ -560,12 +513,13 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/bet', authenticateToken, async (req, res) => {
-    const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
+    try {
+        const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
         if (userError) throw userError;
-
         if (['flagged', 'non-active'].includes(user.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
+
     
     const { amount, bet_on } = req.body;
     if (!amount || amount < 10 || !bet_on) { return res.status(400).json({ error: 'Invalid bet details. Minimum bet is ₹10.' }); }
@@ -604,71 +558,40 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // ✅ UPDATED: This endpoint now includes the 'last_claim_at' timestamp
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('balance, withdrawable_wallet, todays_income_unclaimed, last_claim_at')
-            .eq('id', req.user.id)
-            .single();
-
-        if (error) throw error;
-        
-        res.json({ 
-            balance: user.balance, 
-            withdrawable_wallet: user.withdrawable_wallet, 
-            todaysIncome: user.todays_income_unclaimed,
-            lastClaimAt: user.last_claim_at // Send the last claim time to the frontend
+        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
+        if (userError) throw userError;
+        const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+        if (rpcError) throw rpcError;
+        res.json({
+            balance: user.balance,
+            withdrawable_wallet: user.withdrawable_wallet,
+            todaysIncome: claimableIncome
         });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch financial summary' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to fetch financial summary.' }); }
 });
+
 
 // ✅ UPDATED: This endpoint now correctly joins with product_plans to get daily_income
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase
-            .from('investments')
-            .select(`
-                id,
-                plan_name,
-                amount,
-                status,
-                days_left,
-                product_plans ( daily_income )
-            `)
-            .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false });
-
+        const { data, error } = await supabase.from('investments').select(`id, plan_name, amount, status, days_left, created_at, product_plans(daily_income)`).eq('user_id', req.user.id).order('created_at', { ascending: false });
         if (error) throw error;
-        
-        // Flatten the nested product_plans object for easier frontend use
-        const formattedData = data.map(inv => ({
-            ...inv,
-            daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
-        }));
-
+        const formattedData = data.map(inv => ({ ...inv, daily_income: inv.product_plans ? inv.product_plans.daily_income : 0 }));
         res.json({ investments: formattedData });
-    } catch (error) {
-        console.error("Failed to fetch investments:", error);
-        res.status(500).json({ error: 'Failed to fetch user investments.' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to fetch user investments.' }); }
 });
 
 // ✅ UPDATED: This endpoint now uses the new, secure database function
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        const { data: claimedAmount, error } = await supabase.rpc('process_income_claim', { p_user_id: req.user.id });
+        const { data: claimedAmount, error } = await supabase.rpc('process_user_income_claim', { p_user_id: req.user.id });
         if (error) throw error;
-
         if (claimedAmount > 0) {
-            res.json({ message: `Successfully claimed ₹${claimedAmount}. It has been added to your withdrawable balance.` });
+            res.json({ message: `Successfully claimed ₹${claimedAmount}.` });
         } else {
-            res.status(400).json({ error: 'You have no income to claim, or you must wait 24 hours since your last claim.' });
+            res.status(400).json({ error: 'You have no income to claim at this time.' });
         }
-    } catch (error) {
-        console.error('Claim income error:', error);
-        res.status(500).json({ error: 'Failed to claim income. An error occurred on the server.' });
-    }
+    } catch (error) { res.status(500).json({ error: 'Failed to claim income.' }); }
 });
 
 // ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
@@ -740,35 +663,15 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         const { data: recharge, error: fetchError } = await supabase.from('recharges').select('*').eq('id', id).single();
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
         if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
-
-        // Step 1: Update user's balance
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
-        
-        // Step 2: Update recharge status
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date() }).eq('id', id);
-
-        // Step 3: Trigger the referral bonus function in the database
         const { error: referralError } = await supabase.rpc('handle_deposit_referral', {
-            depositing_user_id: recharge.user_id,
-            deposit_id: recharge.id,
-            deposit_amount: recharge.amount
+            depositing_user_id: recharge.user_id, deposit_id: recharge.id, deposit_amount: recharge.amount
         });
-        if (referralError) {
-            // Log the error but don't fail the entire request, as the deposit was successful
-            console.error("Referral processing error:", referralError);
-        }
-
-        // Step 4: Create a notification for the user who deposited
-        await supabase.from('notifications').insert({
-            user_id: recharge.user_id, type: 'deposit',
-            message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved.`
-        });
-
+        if (referralError) console.error("Referral processing error:", referralError);
+        await supabase.from('notifications').insert({ user_id: recharge.user_id, type: 'deposit', message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved.` });
         res.json({ message: 'Deposit approved, notification sent, and referral bonuses processed.' });
-    } catch (err) {
-        console.error("Approve deposit error:", err);
-        res.status(500).json({ error: 'Failed to approve deposit.' });
-    }
+    } catch (err) { res.status(500).json({ error: 'Failed to approve deposit.' }); }
 });
 
 
