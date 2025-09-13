@@ -794,13 +794,19 @@ app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
     const { userId } = req.body;
     try {
-        if (!userId) {
-            // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
-            const { data: task } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').single();
-            const lastRun = new Date(task.last_run_at);
-            const now = new Date();
-            if (now.getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
-                return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
+        if (!userId) { // Global distribution logic
+            // Use .maybeSingle() to prevent a crash if the record doesn't exist yet.
+            const { data: task, error: taskError } = await supabase.from('daily_profits').select('last_run_at').eq('task_name', 'distribute_income').maybeSingle();
+            
+            if (taskError && taskError.code !== 'PGRST116') throw taskError;
+
+            // Only check the cooldown if a task record was found.
+            if (task) {
+                const lastRun = new Date(task.last_run_at);
+                const now = new Date();
+                if (now.getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
+                    return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
+                }
             }
         }
 
@@ -824,7 +830,6 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         }
         
         if (!userId) {
-             // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
             await supabase.from('daily_profits').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         }
         
@@ -836,6 +841,7 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
         res.status(500).json({ error: 'Failed to distribute income.' });
     }
 });
+
 
 // ✅ UPDATED: Setting user status now creates the specific notifications you requested
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
