@@ -384,7 +384,7 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
             supabase.from('recharges').select('id, amount, status, created_at').eq('user_id', userId).eq('status', 'approved'),
             supabase.from('withdrawals').select('id, amount, status, created_at').eq('user_id', userId),
             supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId),
-            supabase.from('bets').select('id, amount, payout, status, created_at').eq('user_id', userId)
+            // supabase.from('bets').select('id, amount, payout, status, created_at').eq('user_id', userId)
         ]);
 
         const formatted = [];
