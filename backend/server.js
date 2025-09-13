@@ -182,10 +182,17 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url').eq('id', req.user.id).single();
+        const { data: user, error } = await supabase
+            .from('users')
+            // Added 'is_admin' to the list of columns to fetch
+            .select('id, name, ip_username, status, avatar_url, is_admin') 
+            .eq('id', req.user.id)
+            .single();
+            
         if (error) throw error;
         res.json({ user });
     } catch (error) {
+        console.error("Failed to fetch user data:", error);
         res.status(500).json({ error: 'Failed to fetch user data' });
     }
 });
