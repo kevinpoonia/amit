@@ -197,28 +197,33 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-    try {
-        const { data: user, error } = await supabase
-            .from('users')
-            // Corrected 'todays_income' to 'todays_income_unclaimed'
-            .select('balance, withdrawable_wallet, todays_income_unclaimed, last_claim_at')
-            .eq('id', req.user.id)
-            .single();
+// // ✅ THIS IS THE CORRECTED ENDPOINT
+// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
+//     try {
+//         // Step 1: Fetch the user's basic wallet balances and last claim time.
+//         const { data: user, error: userError } = await supabase
+//             .from('users')
+//             .select('balance, withdrawable_wallet, last_claim_at')
+//             .eq('id', req.user.id)
+//             .single();
+//         if (userError) throw userError;
 
-        if (error) throw error;
-        
-        res.json({ 
-            balance: user.balance, 
-            withdrawable_wallet: user.withdrawable_wallet, 
-            todaysIncome: user.todays_income_unclaimed,
-            lastClaimAt: user.last_claim_at
-        });
-    } catch (error) {
-        console.error("Financial Summary Error:", error);
-        res.status(500).json({ error: 'Failed to fetch financial summary' });
-    }
-});
+//         // Step 2: Call the database function to calculate the user's total claimable income for today.
+//         const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
+//         if (rpcError) throw rpcError;
+
+//         // Step 3: Send all the correct data to the frontend.
+//         res.json({
+//             balance: user.balance,
+//             withdrawable_wallet: user.withdrawable_wallet,
+//             todaysIncome: claimableIncome, // This now contains the real calculated amount
+//             lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
+//         });
+//     } catch (error) { 
+//         console.error("Financial Summary Error:", error);
+//         res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+//     }
+// });
 
 // ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
@@ -574,18 +579,32 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 });
 
 // ✅ UPDATED: This endpoint now includes the 'last_claim_at' timestamp
+// ✅ THIS IS THE CORRECTED ENDPOINT
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('balance, withdrawable_wallet').eq('id', req.user.id).single();
+        // Step 1: Fetch the user's basic wallet balances and last claim time.
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('balance, withdrawable_wallet, last_claim_at')
+            .eq('id', req.user.id)
+            .single();
         if (userError) throw userError;
+
+        // Step 2: Call the database function to calculate the user's total claimable income for today.
         const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
         if (rpcError) throw rpcError;
+
+        // Step 3: Send all the correct data to the frontend.
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: claimableIncome
+            todaysIncome: claimableIncome, // This now contains the real calculated amount
+            lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
         });
-    } catch (error) { res.status(500).json({ error: 'Failed to fetch financial summary.' }); }
+    } catch (error) { 
+        console.error("Financial Summary Error:", error);
+        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+    }
 });
 
 
