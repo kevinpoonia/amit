@@ -215,19 +215,22 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // ✅ THIS IS THE CORRECTED ENDPOINT THAT FIXES THE LOGIN ISSUE
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase
+        const { data: user, error: userError } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, todays_income_unclaimed')
+            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
             .eq('id', req.user.id)
             .single();
-        if (error) throw error;
+        if (userError) throw userError;
+
         res.json({
             balance: user.balance,
             withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: user.todays_income_unclaimed
+            todaysIncome: user.todays_income_unclaimed,
+            lastClaimAt: user.last_claim_at
         });
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to fetch financial summary' });
+    } catch (error) { 
+        console.error("Financial Summary Error:", error);
+        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
     }
 });
 
