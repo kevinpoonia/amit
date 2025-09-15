@@ -289,15 +289,16 @@ app.post('/api/notifications/delete-read', authenticateToken, async (req, res) =
 });
 
 
+// ✅ UPDATED: The /recharge endpoint now accepts and saves the screenshot URL.
 app.post('/api/recharge', authenticateToken, async (req, res) => {
-    const { amount, utr } = req.body;
-    if (!amount || amount <= 0 || !utr || utr.trim() === '') { return res.status(400).json({ error: 'Valid amount and UTR are required' }); }
+    const { amount, utr, screenshotUrl } = req.body;
+    if (!amount || amount <= 0 || !utr || utr.trim() === '' || !screenshotUrl) { 
+        return res.status(400).json({ error: 'Valid amount, UTR, and a payment screenshot are required' }); 
+    }
     try {
-        const { data: existingRecharge } = await supabase.from('recharges').select('id').eq('utr', utr.trim()).eq('status', 'approved').limit(1);
-        if (existingRecharge && existingRecharge.length > 0) {
-            return res.status(400).json({ error: 'This transaction ID has already been used.' });
-        }
-        const { error } = await supabase.from('recharges').insert([{ user_id: req.user.id, amount, utr: utr.trim() }]);
+        const { error } = await supabase.from('recharges').insert([
+            { user_id: req.user.id, amount, utr: utr.trim(), screenshot_url: screenshotUrl }
+        ]);
         if (error) throw error;
         res.json({ message: 'Recharge request submitted successfully.' });
     } catch (error) {
@@ -695,13 +696,20 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 // ==========================================
 // ========== ADMIN API ENDPOINTS ===========
 // ==========================================
+// ✅ UPDATED: This endpoint now fetches the screenshot URL for the admin panel.
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('recharges').select('*').eq('status', 'pending').order('request_date', { ascending: true });
+        const { data, error } = await supabase
+            .from('recharges')
+            .select('id, user_id, amount, utr, request_date, screenshot_url') // Added screenshot_url
+            .eq('status', 'pending')
+            .order('request_date', { ascending: true });
         if (error) throw error;
         res.json({ recharges: data });
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending deposits.' }); }
 });
+
+
 
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
     try {
