@@ -433,16 +433,29 @@ app.get('/api/fake-withdrawals', (req, res) => {
 // ========== LOTTERY GAME LOGIC ============
 // ==========================================
 
-const DRAW_TIMES_CONFIG = {
-    '8AM': '0 8 * * *',
-    '12PM': '0 12 * * *',
-    '4PM': '0 16 * * *',
-    '8PM': '0 20 * * *'
-};
+const DRAW_TIMES_HOURS = [8, 12, 16, 20]; // 8 AM, 12 PM, 4 PM, 8 PM IST
 let adminLotteryChoice = { roundId: null, winning_num_a: null, winning_num_b: null };
-let lotteryMode = 'auto'; // 'auto' or 'admin'
+let lotteryMode = 'auto';
 
-const getLotteryRoundId = (date, hour) => `${date.toISOString().slice(0, 10)}-${hour}`;
+const getNextDraw = () => {
+    const now = new Date();
+    const nowIST = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const todayIST = new Date(Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), nowIST.getUTCDate()));
+    for (let i = 0; i < DRAW_TIMES_HOURS.length; i++) {
+        const hour = DRAW_TIMES_HOURS[i];
+        const drawTime = new Date(todayIST);
+        drawTime.setUTCHours(hour, 0, 0, 0);
+        if (nowIST < drawTime) {
+            return { id: `${todayIST.toISOString().slice(0, 10)}-${hour}` };
+        }
+    }
+    const tomorrowIST = new Date(todayIST);
+    tomorrowIST.setUTCDate(todayIST.getUTCDate() + 1);
+    const nextDrawTime = new Date(tomorrowIST);
+    nextDrawTime.setUTCHours(DRAW_TIMES_HOURS[0], 0, 0, 0);
+    return { id: `${tomorrowIST.toISOString().slice(0, 10)}-${DRAW_TIMES_HOURS[0]}` };
+};
+
 
 const calculateLotteryResult = async (roundId) => {
     const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
@@ -450,16 +463,14 @@ const calculateLotteryResult = async (roundId) => {
 
     const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.bet_amount), 0);
     let lowestPayout = Infinity;
-    let bestOutcome = { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) }; // Default random result
+    let bestOutcome = { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) };
 
-    // Iterate through all 55 possible unique pairs (including doubles like {7,7})
     for (let a = 0; a <= 9; a++) {
         for (let b = a; b <= 9; b++) {
             let currentPayout = 0;
             bets.forEach(bet => {
                 const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
                 const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
-                
                 if (isDoubleBet) {
                     if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
                         currentPayout += bet.bet_amount * 25;
@@ -470,7 +481,6 @@ const calculateLotteryResult = async (roundId) => {
                     }
                 }
             });
-
             if (currentPayout < lowestPayout) {
                 lowestPayout = currentPayout;
                 bestOutcome = { a, b };
@@ -478,13 +488,13 @@ const calculateLotteryResult = async (roundId) => {
         }
     }
 
-    const maxAcceptableLoss = totalBetIn * 0.05; // 5% loss cap
-    const netResult = totalBetIn - lowestPayout;
+    const maxLoss = totalBetIn * 0.05;
+    const netLoss = lowestPayout - totalBetIn;
 
-    if (netResult < -maxAcceptableLoss) {
-        return { ...bestOutcome, jackpotRollover: true, finalPayout: lowestPayout, netResult };
+    if (netLoss > maxLoss) {
+        return { ...bestOutcome, jackpotRollover: true };
     }
-    return { ...bestOutcome, jackpotRollover: false, finalPayout: lowestPayout, netResult };
+    return { ...bestOutcome, jackpotRollover: false };
 };
 
 const processLotteryRound = async (roundId) => {
@@ -493,26 +503,17 @@ const processLotteryRound = async (roundId) => {
     
     if (lotteryMode === 'admin' && adminLotteryChoice.roundId === roundId && adminLotteryChoice.winning_num_a !== null) {
         result = { a: adminLotteryChoice.winning_num_a, b: adminLotteryChoice.winning_num_b, jackpotRollover: false };
-        console.log(`Using admin-defined result for round ${roundId}: ${result.a}, ${result.b}`);
     } else {
         result = await calculateLotteryResult(roundId);
-        console.log(`Calculated result for round ${roundId}: ${result.a}, ${result.b}. Rollover: ${result.jackpotRollover}`);
     }
 
-    await supabase.from('lottery_results').insert({
-        round_id: roundId,
-        winning_num_a: result.a,
-        winning_num_b: result.b,
-        jackpot_rolled_over: result.jackpotRollover
-    });
-    
-    const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
+    const { data: bets, error } = await supabase.from('lottery_bets').select('*, users(name)').eq('round_id', roundId);
     if (error) { console.error("Error fetching bets for payout:", error); return; }
 
+    const winners = [];
     for (const bet of bets) {
         const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
         const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
-        
         let payout = 0;
         let status = 'lost';
 
@@ -529,17 +530,35 @@ const processLotteryRound = async (roundId) => {
         }
         
         if (payout > 0) {
+            winners.push(bet.users.name);
             await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
         }
         await supabase.from('lottery_bets').update({ status, payout }).eq('id', bet.id);
     }
-    adminLotteryChoice = { roundId: null, winning_num_a: null, winning_num_b: null }; // Reset admin choice
+
+    await supabase.from('lottery_results').insert({
+        round_id: roundId,
+        winning_num_a: result.a,
+        winning_num_b: result.b,
+        jackpot_rolled_over: result.jackpotRollover,
+        winner_count: winners.length,
+        sample_winner_name: winners.length > 0 ? winners[Math.floor(Math.random() * winners.length)] : null
+    });
+    
+    const nextDraw = getNextDraw();
+    await supabase.from('lottery_rounds').insert({
+        round_id: nextDraw.id,
+        base_player_count: Math.floor(Math.random() * 150) + 100,
+        total_pool_amount: Math.floor(Math.random() * 200000) + 50000
+    });
+    
+    console.log(`Round ${roundId} processed. Winning numbers: ${result.a}, ${result.b}. Rollover: ${result.jackpotRollover}`);
 };
 
-Object.entries(DRAW_TIMES_CONFIG).forEach(([name, time]) => {
-    cron.schedule(time, () => {
-        const now = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000));
-        const roundId = getLotteryRoundId(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())), name.replace('PM','').replace('AM',''));
+DRAW_TIMES_HOURS.forEach((hour) => {
+    cron.schedule(`0 ${hour} * * *`, () => {
+        const now = new Date();
+        const roundId = `${now.toISOString().slice(0, 10)}-${hour}`;
         processLotteryRound(roundId);
     }, { timezone: "Asia/Kolkata" });
 });
@@ -834,13 +853,27 @@ app.post('/api/lottery/bet', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Failed to place bet.' }); }
 });
 
+app.get('/api/lottery/live-stats/:roundId', authenticateToken, async (req, res) => {
+    try {
+        const { roundId } = req.params;
+        const { data, error } = await supabase.from('lottery_rounds').select('*').eq('round_id', roundId).single();
+        if (error) {
+            return res.json({ base_player_count: 100, total_pool_amount: 50000 });
+        }
+        res.json(data);
+    } catch (e) { res.status(500).json({ error: 'Failed to get live stats.' }); }
+});
+
 app.get('/api/lottery/history', authenticateToken, async (req, res) => {
     try {
-        const { data, error } = await supabase.from('lottery_results').select('*').order('created_at', { ascending: false }).limit(20);
+        const { data, error } = await supabase.from('lottery_results')
+            .select('round_id, winning_num_a, winning_num_b, jackpot_rolled_over, winner_count, sample_winner_name, created_at')
+            .order('created_at', { ascending: false }).limit(20);
         if (error) throw error;
         res.json({ history: data });
     } catch (e) { res.status(500).json({ error: 'Failed to fetch history.' }); }
 });
+
 
 app.get('/api/lottery/my-bet-result/:roundId', authenticateToken, async (req, res) => {
     const { roundId } = req.params;
