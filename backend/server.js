@@ -429,6 +429,122 @@ app.get('/api/fake-withdrawals', (req, res) => {
     res.json({ withdrawals });
 });
 
+// ==========================================
+// ========== LOTTERY GAME LOGIC ============
+// ==========================================
+
+const DRAW_TIMES_CONFIG = {
+    '8AM': '0 8 * * *',
+    '12PM': '0 12 * * *',
+    '4PM': '0 16 * * *',
+    '8PM': '0 20 * * *'
+};
+let adminLotteryChoice = { roundId: null, winning_num_a: null, winning_num_b: null };
+let lotteryMode = 'auto'; // 'auto' or 'admin'
+
+const getLotteryRoundId = (date, hour) => `${date.toISOString().slice(0, 10)}-${hour}`;
+
+const calculateLotteryResult = async (roundId) => {
+    const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
+    if (error) throw error;
+
+    const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.bet_amount), 0);
+    let lowestPayout = Infinity;
+    let bestOutcome = { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) }; // Default random result
+
+    // Iterate through all 55 possible unique pairs (including doubles like {7,7})
+    for (let a = 0; a <= 9; a++) {
+        for (let b = a; b <= 9; b++) {
+            let currentPayout = 0;
+            bets.forEach(bet => {
+                const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
+                const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
+                
+                if (isDoubleBet) {
+                    if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
+                        currentPayout += bet.bet_amount * 25;
+                    }
+                } else if (isSingleBet) {
+                    if (bet.selected_num_a === a || bet.selected_num_a === b) {
+                        currentPayout += bet.bet_amount * 2.5;
+                    }
+                }
+            });
+
+            if (currentPayout < lowestPayout) {
+                lowestPayout = currentPayout;
+                bestOutcome = { a, b };
+            }
+        }
+    }
+
+    const maxAcceptableLoss = totalBetIn * 0.05; // 5% loss cap
+    const netResult = totalBetIn - lowestPayout;
+
+    if (netResult < -maxAcceptableLoss) {
+        return { ...bestOutcome, jackpotRollover: true, finalPayout: lowestPayout, netResult };
+    }
+    return { ...bestOutcome, jackpotRollover: false, finalPayout: lowestPayout, netResult };
+};
+
+const processLotteryRound = async (roundId) => {
+    console.log(`Processing lottery for round: ${roundId}`);
+    let result;
+    
+    if (lotteryMode === 'admin' && adminLotteryChoice.roundId === roundId && adminLotteryChoice.winning_num_a !== null) {
+        result = { a: adminLotteryChoice.winning_num_a, b: adminLotteryChoice.winning_num_b, jackpotRollover: false };
+        console.log(`Using admin-defined result for round ${roundId}: ${result.a}, ${result.b}`);
+    } else {
+        result = await calculateLotteryResult(roundId);
+        console.log(`Calculated result for round ${roundId}: ${result.a}, ${result.b}. Rollover: ${result.jackpotRollover}`);
+    }
+
+    await supabase.from('lottery_results').insert({
+        round_id: roundId,
+        winning_num_a: result.a,
+        winning_num_b: result.b,
+        jackpot_rolled_over: result.jackpotRollover
+    });
+    
+    const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
+    if (error) { console.error("Error fetching bets for payout:", error); return; }
+
+    for (const bet of bets) {
+        const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
+        const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
+        
+        let payout = 0;
+        let status = 'lost';
+
+        if (isDoubleBet && !result.jackpotRollover) {
+             if ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a)) {
+                payout = bet.bet_amount * 25;
+                status = 'won';
+            }
+        } else if (isSingleBet) {
+             if (bet.selected_num_a === result.a || bet.selected_num_a === result.b) {
+                payout = bet.bet_amount * 2.5;
+                status = 'won';
+            }
+        }
+        
+        if (payout > 0) {
+            await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+        }
+        await supabase.from('lottery_bets').update({ status, payout }).eq('id', bet.id);
+    }
+    adminLotteryChoice = { roundId: null, winning_num_a: null, winning_num_b: null }; // Reset admin choice
+};
+
+Object.entries(DRAW_TIMES_CONFIG).forEach(([name, time]) => {
+    cron.schedule(time, () => {
+        const now = new Date();
+        const roundId = getLotteryRoundId(now, name.replace('PM','').replace('AM',''));
+        processLotteryRound(roundId);
+    }, { timezone: "Asia/Kolkata" });
+});
+
+
 
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
@@ -695,6 +811,53 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 
 // ==========================================
 // ========== ADMIN API ENDPOINTS ===========
+
+// --- LOTTERY API ENDPOINTS ---
+app.get('/api/lottery/state', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('lottery_results').select('*').order('created_at', { ascending: false }).limit(1);
+        if (error) throw error;
+        res.json({ lastResult: data[0] || null });
+    } catch (e) { res.status(500).json({ error: 'Failed to get lottery state.' }); }
+});
+
+app.post('/api/lottery/bet', authenticateToken, async (req, res) => {
+    const { roundId, betAmount, selectedNumA, selectedNumB } = req.body;
+    try {
+        const { data: success, error } = await supabase.rpc('place_lottery_bet', {
+            p_user_id: req.user.id, p_round_id: roundId, p_bet_amount: betAmount,
+            p_num_a: selectedNumA, p_num_b: selectedNumB
+        });
+        if (error || !success) return res.status(400).json({ error: 'Bet failed. Insufficient balance or invalid data.' });
+        res.json({ message: 'Bet placed successfully!' });
+    } catch (e) { res.status(500).json({ error: 'Failed to place bet.' }); }
+});
+
+app.get('/api/lottery/history', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('lottery_results').select('*').order('created_at', { ascending: false }).limit(20);
+        if (error) throw error;
+        res.json({ history: data });
+    } catch (e) { res.status(500).json({ error: 'Failed to fetch history.' }); }
+});
+
+app.get('/api/lottery/my-bet-result/:roundId', authenticateToken, async (req, res) => {
+    const { roundId } = req.params;
+    try {
+        const { data, error } = await supabase.from('lottery_bets').select('bet_amount, status, payout').eq('user_id', req.user.id).eq('round_id', roundId).limit(1).single();
+        if (error) return res.json({ title: "No Bet Placed", message: "You didn't play this round. Good luck next time!" });
+
+        if (data.status === 'won') {
+            if (data.payout / data.bet_amount >= 25) {
+                return res.json({ title: 'JACKPOT!', message: `Congratulations! You won ${formatCurrency(data.payout)}!` });
+            }
+            return res.json({ title: 'You Won!', message: `Congratulations! You won ${formatCurrency(data.payout)}!` });
+        }
+        return res.json({ title: 'Better Luck Next Time!', message: "Your numbers didn't match this time. Try again!" });
+    } catch (e) { res.status(500).json({ error: 'Failed to fetch your result.' }); }
+});
+
+
 // ==========================================
 // ✅ UPDATED: This endpoint now fetches the screenshot URL for the admin panel.
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
@@ -1058,7 +1221,38 @@ app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
 
 // ==========================================
 // ========== ADMIN GAME API ENDPOINTS ===========
+
+// --- ADMIN LOTTERY ENDPOINTS ---
+app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
+    const { roundId } = req.query;
+    try {
+        const result = await calculateLotteryResult(roundId); // This needs to be adapted to return all outcomes
+        res.json(result);
+    } catch (e) { res.status(500).json({ error: 'Failed to analyze lottery round.' }); }
+});
+
+app.post('/api/admin/lottery-mode', authenticateAdmin, (req, res) => {
+    const { mode } = req.body;
+    if (['auto', 'admin'].includes(mode)) {
+        lotteryMode = mode;
+        res.json({ message: `Lottery mode set to ${mode}.` });
+    } else {
+        res.status(400).json({ error: 'Invalid mode.' });
+    }
+});
+
+app.post('/api/admin/lottery-set-result', authenticateAdmin, async (req, res) => {
+    const { roundId, winning_num_a, winning_num_b } = req.body;
+    adminLotteryChoice = { roundId, winning_num_a, winning_num_b };
+    res.json({ message: `Next result for round ${roundId} has been manually set to ${winning_num_a}, ${winning_num_b}. It will be finalized at the draw time.` });
+});
+
+
+
+
+
 // ==========================================
+
 
 app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     try { 
