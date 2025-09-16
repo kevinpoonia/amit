@@ -538,11 +538,12 @@ const processLotteryRound = async (roundId) => {
 
 Object.entries(DRAW_TIMES_CONFIG).forEach(([name, time]) => {
     cron.schedule(time, () => {
-        const now = new Date();
-        const roundId = getLotteryRoundId(now, name.replace('PM','').replace('AM',''));
+        const now = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000));
+        const roundId = getLotteryRoundId(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())), name.replace('PM','').replace('AM',''));
         processLotteryRound(roundId);
     }, { timezone: "Asia/Kolkata" });
 });
+
 
 
 
