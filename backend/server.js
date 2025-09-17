@@ -889,25 +889,17 @@ app.get('/api/lottery/my-bet-result/:roundId', authenticateToken, async (req, re
     } catch (e) { res.status(500).json({ error: 'Failed to fetch your result.' }); }
 });
 
+
 // ✅ NEW: Endpoint to get a combined financial overview of ALL games.
 app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => {
     try {
-        // Fetch stats from the color prediction game
-        const { data: colorGameBets, error: colorErr } = await supabase
-            .from('bets')
-            .select('amount, payout');
+        const { data: colorGameBets, error: colorErr } = await supabase.from('bets').select('amount, payout');
         if (colorErr) throw colorErr;
-
-        // Fetch stats from the lottery game
-        const { data: lotteryBets, error: lotteryErr } = await supabase
-            .from('lottery_bets')
-            .select('bet_amount, payout');
+        const { data: lotteryBets, error: lotteryErr } = await supabase.from('lottery_bets').select('bet_amount, payout');
         if (lotteryErr) throw lotteryErr;
 
-        // Calculate totals
         const totalColorBet = colorGameBets.reduce((sum, b) => sum + (b.amount || 0), 0);
         const totalColorPayout = colorGameBets.reduce((sum, b) => sum + (b.payout || 0), 0);
-
         const totalLotteryBet = lotteryBets.reduce((sum, b) => sum + (b.bet_amount || 0), 0);
         const totalLotteryPayout = lotteryBets.reduce((sum, b) => sum + (b.payout || 0), 0);
 
@@ -915,13 +907,8 @@ app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => 
         const totalPayout = totalColorPayout + totalLotteryPayout;
         const totalPL = totalBet - totalPayout;
 
-        res.json({
-            totalBet,
-            totalPayout,
-            totalPL
-        });
+        res.json({ totalBet, totalPayout, totalPL });
     } catch (error) {
-        console.error("Error fetching overall game stats:", error);
         res.status(500).json({ error: 'Failed to fetch overall game statistics.' });
     }
 });
