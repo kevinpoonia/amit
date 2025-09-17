@@ -477,6 +477,7 @@ const runAviatorCycle = async () => {
     clearInterval(aviatorCountdownInterval);
     aviatorGameState = 'playing';
     aviatorRoundId = `aviator-${Date.now()}`;
+   aviatorAdminSettings.manualCrashPoint = null; // Reset manual crash point each round
     const startTime = Date.now();
     
     const { data: bets, error } = await supabase.from('aviator_bets').select('bet_amount').eq('round_id', aviatorRoundId);
@@ -1398,6 +1399,35 @@ app.post('/api/admin/aviator-settings', authenticateAdmin, (req, res) => {
     else aviatorAdminSettings.manualCrashPoint = null; // Reset if not provided
     
     res.json({ message: 'Aviator settings updated.', settings: aviatorAdminSettings });
+});
+// ✅ NEW: Endpoint to calculate the profit analysis table for the admin
+app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: bets } = await supabase.from('aviator_bets').select('*').eq('round_id', aviatorRoundId);
+        const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
+
+        const profitTargets = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0];
+        const analysis = profitTargets.map(profitMargin => {
+            const targetNetProfit = totalBetIn * profitMargin;
+            const targetPayout = totalBetIn - targetNetProfit;
+            
+            // This is a simplified calculation to find the multiplier that results in the target payout
+            // A real-world scenario would need a more complex algorithm to iterate through cashed-out bets
+            const requiredMultiplier = bets.length > 0 ? (totalBetIn / (targetPayout || 1)) : 1.5;
+
+            return {
+                profitMargin: `${(profitMargin * 100).toFixed(0)}%`,
+                requiredMultiplier: requiredMultiplier.toFixed(2) + 'x',
+                totalBet: totalBetIn,
+                estimatedPayout: targetPayout,
+                netProfit: targetNetProfit
+            };
+        });
+
+        res.json({ analysis });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to generate Aviator analysis.' });
+    }
 });
 
 
