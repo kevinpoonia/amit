@@ -426,6 +426,101 @@ app.get('/api/fake-withdrawals', (req, res) => {
     res.json({ withdrawals });
 });
 
+// --- AVIATOR API ENDPOINTS ---
+app.get('/api/aviator/state', authenticateToken, (req, res) => {
+    res.json({ 
+        gameState: aviatorGameState, 
+        multiplier: aviatorMultiplier, 
+        roundId: aviatorRoundId,
+        countdown: aviatorCountdown 
+    });
+});
+
+app.post('/api/aviator/bet', authenticateToken, async (req, res) => {
+    const { betAmount, roundId } = req.body;
+    if (aviatorGameState !== 'waiting') {
+        return res.status(400).json({ error: 'Betting is only allowed before the round starts.' });
+    }
+    // ... (logic to deduct user balance and insert bet into aviator_bets)
+    res.json({ message: 'Bet placed!' });
+});
+
+app.post('/api/aviator/cashout', authenticateToken, async (req, res) => {
+    const { roundId, currentMultiplier } = req.body;
+    // ... (logic to update bet status to 'cashed_out', calculate payout, and credit user wallet)
+    res.json({ message: 'Cashed out!', payout: betAmount * currentMultiplier });
+});
+
+app.get('/api/aviator/history', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('aviator_rounds').select('*').order('created_at', { ascending: false }).limit(20);
+        if (error) throw error;
+        res.json({ history: data });
+    } catch(err) {
+        res.status(500).json({ error: 'Failed to fetch Aviator history' });
+    }
+});
+
+// ==========================================
+// ========== AVIATOR GAME LOGIC ============
+// ==========================================
+
+let aviatorGameState = 'waiting';
+let aviatorMultiplier = 1.00;
+let aviatorRoundId = `aviator-${Date.now()}`;
+let aviatorCountdown = 10;
+let aviatorAdminSettings = { mode: 'auto', profitMargin: 0.10, manualCrashPoint: null };
+let aviatorGameLoopInterval;
+let aviatorCountdownInterval;
+
+const runAviatorCycle = async () => {
+    clearInterval(aviatorCountdownInterval);
+    aviatorGameState = 'playing';
+    aviatorRoundId = `aviator-${Date.now()}`;
+    const startTime = Date.now();
+    
+    const { data: bets, error } = await supabase.from('aviator_bets').select('bet_amount').eq('round_id', aviatorRoundId);
+    if(error) console.error("Error fetching aviator bets:", error);
+    const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
+    
+    let crashPoint;
+    if (aviatorAdminSettings.mode === 'admin' && aviatorAdminSettings.manualCrashPoint) {
+        crashPoint = aviatorAdminSettings.manualCrashPoint;
+    } else {
+        const targetPayout = totalBetIn * (1 - aviatorAdminSettings.profitMargin);
+        // This is a simplified calculation. A real one would be more complex.
+        crashPoint = Math.max(1.01, (totalBetIn / (targetPayout || 1)) * 1.2 + (Math.random() * 1.5));
+    }
+    
+    aviatorGameLoopInterval = setInterval(async () => {
+        const elapsedTime = (Date.now() - startTime) / 1000;
+        aviatorMultiplier = parseFloat((1 + elapsedTime * 0.2 + Math.pow(elapsedTime, 2) * 0.01).toFixed(2));
+        
+        if (aviatorMultiplier >= crashPoint) {
+            clearInterval(aviatorGameLoopInterval);
+            aviatorGameState = 'crashed';
+            await supabase.from('aviator_rounds').insert({ round_id: aviatorRoundId, crash_multiplier: aviatorMultiplier });
+            await supabase.from('aviator_bets').update({ status: 'lost' }).eq('round_id', aviatorRoundId).eq('status', 'pending');
+            
+            setTimeout(() => {
+                aviatorGameState = 'waiting';
+                aviatorCountdown = 10;
+                aviatorCountdownInterval = setInterval(() => {
+                    aviatorCountdown--;
+                    if(aviatorCountdown <= 0) {
+                        clearInterval(aviatorCountdownInterval);
+                        runAviatorCycle();
+                    }
+                }, 1000);
+            }, 5000); // 5-second grace period after crash
+        }
+    }, 100);
+};
+
+// Initial start of the game cycle
+runAviatorCycle();
+
+
 // ==========================================
 // ========== LOTTERY GAME LOGIC ============
 // ==========================================
@@ -1283,6 +1378,30 @@ app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
 
 // ==========================================
 // ========== ADMIN GAME API ENDPOINTS ===========
+
+// --- ADMIN AVIATOR ENDPOINTS ---
+app.get('/api/admin/aviator/live-bets', authenticateAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('aviator_bets').select('*, users(name)').eq('round_id', aviatorRoundId);
+        if (error) throw error;
+        res.json({ bets: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch live Aviator bets.' });
+    }
+});
+
+app.post('/api/admin/aviator-settings', authenticateAdmin, (req, res) => {
+    const { mode, profitMargin, manualCrashPoint } = req.body;
+    if (mode) aviatorAdminSettings.mode = mode;
+    if (profitMargin) aviatorAdminSettings.profitMargin = parseFloat(profitMargin);
+    if (manualCrashPoint) aviatorAdminSettings.manualCrashPoint = parseFloat(manualCrashPoint);
+    else aviatorAdminSettings.manualCrashPoint = null; // Reset if not provided
+    
+    res.json({ message: 'Aviator settings updated.', settings: aviatorAdminSettings });
+});
+
+
+
 
 // --- ADMIN LOTTERY ENDPOINTS ---
 app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
