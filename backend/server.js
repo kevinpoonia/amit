@@ -215,22 +215,19 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // ✅ THIS IS THE CORRECTED ENDPOINT THAT FIXES THE LOGIN ISSUE
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error: userError } = await supabase
+        const { data: user, error } = await supabase
             .from('users')
-            .select('balance, withdrawable_wallet, last_claim_at, todays_income_unclaimed')
+            .select('balance, withdrawable_wallet, todays_income_unclaimed')
             .eq('id', req.user.id)
             .single();
-        if (userError) throw userError;
-
-        res.json({
-            balance: user.balance,
-            withdrawable_wallet: user.withdrawable_wallet,
-            todaysIncome: user.todays_income_unclaimed,
-            lastClaimAt: user.last_claim_at
+        if (error) throw error;
+        res.json({ 
+            balance: user.balance, 
+            withdrawable_wallet: user.withdrawable_wallet, 
+            todaysIncome: user.todays_income_unclaimed 
         });
-    } catch (error) { 
-        console.error("Financial Summary Error:", error);
-        res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch financial summary' });
     }
 });
 
@@ -786,6 +783,7 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
 });
 
 
+
 // ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
     const userId = req.user.id;
@@ -988,7 +986,7 @@ app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
         if (error) throw error;
 
         const lastRun = new Date(data.last_run_at);
-        const nextRun = new Date(lastRun.getTime() + 24 * 60 * 60 * 1000);
+        const nextRun = new Date(lastRun.getTime() + 2 * 60 * 60 * 1000); // 2-hour cooldown
 
         res.json({
             canDistribute: new Date() > nextRun,
@@ -1000,22 +998,19 @@ app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
-    const { userId } = req.body;
     try {
-        if (!userId) { // Global distribution logic
-            const { data: task } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
-            const lastRun = new Date(task.last_run_at);
-            if (new Date().getTime() - lastRun.getTime() < 24 * 60 * 60 * 1000) {
-                return res.status(400).json({ error: `You can only distribute globally once every 24 hours.` });
-            }
+        const { data: task, error: taskError } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
+        if (taskError) throw taskError;
+
+        const lastRun = new Date(task.last_run_at);
+        if (new Date().getTime() - lastRun.getTime() < 2 * 60 * 60 * 1000) {
+            return res.status(429).json({ error: `You can only distribute income once every 2 hours.` });
         }
 
-        let query = supabase.from('investments').select('user_id, product_plans(daily_income)').eq('status', 'active');
-        if (userId) {
-            query = query.eq('user_id', userId);
-        }
-        
-        const { data: activeInvestments, error: fetchError } = await query;
+        const { data: activeInvestments, error: fetchError } = await supabase
+            .from('investments')
+            .select('user_id, product_plans(daily_income)')
+            .eq('status', 'active');
         if (fetchError) throw fetchError;
 
         const incomeDistribution = {};
@@ -1025,23 +1020,31 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
             }
         }
 
-        for (const uid in incomeDistribution) {
-            await supabase.rpc('increment_unclaimed_income', { p_user_id: parseInt(uid), p_amount: incomeDistribution[uid] });
+        const notifications = [];
+        for (const userId in incomeDistribution) {
+            const amount = incomeDistribution[userId];
+            await supabase.rpc('increment_unclaimed_income', { p_user_id: parseInt(userId), p_amount: amount });
+            
+            notifications.push({
+                user_id: parseInt(userId),
+                type: 'income',
+                message: `Your daily income of ₹${amount.toLocaleString()} is ready to be claimed!`
+            });
         }
         
-        if (!userId) {
-            await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
+        if (notifications.length > 0) {
+            await supabase.from('notifications').insert(notifications);
         }
         
-        const message = userId ? `Successfully distributed income to user ${userId}.` : `Daily income distributed to ${Object.keys(incomeDistribution).length} users.`;
-        res.json({ message });
+        await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
+        
+        res.json({ message: `Daily income distributed to ${Object.keys(incomeDistribution).length} users.` });
 
     } catch (error) {
         console.error("Distribute income error:", error);
         res.status(500).json({ error: 'Failed to distribute income.' });
     }
 });
-
 
 // ✅ UPDATED: Setting user status now creates the specific notifications you requested
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
