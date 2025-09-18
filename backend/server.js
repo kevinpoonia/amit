@@ -468,29 +468,40 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
 let aviatorGameState = 'waiting';
 let aviatorMultiplier = 1.00;
 let aviatorRoundId = `aviator-${Date.now()}`;
-let aviatorCountdown = 10;
+let aviatorCountdown = 8;
 let aviatorAdminSettings = { mode: 'auto', profitMargin: 0.10, manualCrashPoint: null };
 let aviatorGameLoopInterval;
 let aviatorCountdownInterval;
+
+const getRealisticCrashPoint = () => {
+    const r = Math.random();
+    if (r < 0.90) { // 90% chance for 1.00x to 10.00x
+        return 1 + Math.random() * 9;
+    } else if (r < 0.98) { // 8% chance for 10.00x to 30.00x
+        return 10 + Math.random() * 20;
+    } else { // 2% chance for > 30.00x
+        return 30 + Math.random() * 70; // e.g., up to 100x
+    }
+};
 
 const runAviatorCycle = async () => {
     clearInterval(aviatorCountdownInterval);
     aviatorGameState = 'playing';
     aviatorRoundId = `aviator-${Date.now()}`;
-   aviatorAdminSettings.manualCrashPoint = null; // Reset manual crash point each round
+    aviatorAdminSettings.manualCrashPoint = null;
     const startTime = Date.now();
     
-    const { data: bets, error } = await supabase.from('aviator_bets').select('bet_amount').eq('round_id', aviatorRoundId);
-    if(error) console.error("Error fetching aviator bets:", error);
+    const { data: bets } = await supabase.from('aviator_bets').select('bet_amount').eq('round_id', aviatorRoundId);
     const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
     
     let crashPoint;
     if (aviatorAdminSettings.mode === 'admin' && aviatorAdminSettings.manualCrashPoint) {
         crashPoint = aviatorAdminSettings.manualCrashPoint;
-    } else {
+    } else if (totalBetIn > 0) {
         const targetPayout = totalBetIn * (1 - aviatorAdminSettings.profitMargin);
-        // This is a simplified calculation. A real one would be more complex.
         crashPoint = Math.max(1.01, (totalBetIn / (targetPayout || 1)) * 1.2 + (Math.random() * 1.5));
+    } else {
+        crashPoint = getRealisticCrashPoint();
     }
     
     aviatorGameLoopInterval = setInterval(async () => {
@@ -505,7 +516,7 @@ const runAviatorCycle = async () => {
             
             setTimeout(() => {
                 aviatorGameState = 'waiting';
-                aviatorCountdown = 10;
+                aviatorCountdown = 8;
                 aviatorCountdownInterval = setInterval(() => {
                     aviatorCountdown--;
                     if(aviatorCountdown <= 0) {
@@ -518,7 +529,6 @@ const runAviatorCycle = async () => {
     }, 100);
 };
 
-// Initial start of the game cycle
 runAviatorCycle();
 
 
