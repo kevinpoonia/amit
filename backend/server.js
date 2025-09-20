@@ -285,6 +285,24 @@ app.post('/api/notifications/delete-read', authenticateToken, async (req, res) =
     }
 });
 
+// ✅ NEW: Endpoint for the Deposit page to get payment methods and maintenance status.
+app.get('/api/deposit-info', authenticateToken, async (req, res) => {
+    try {
+        const [{ data: methods, error: methodsError }, { data: status, error: statusError }] = await Promise.all([
+            supabase.from('payment_methods').select('*'),
+            supabase.from('system_status').select('is_maintenance, maintenance_ends_at').eq('service_name', 'deposits').single()
+        ]);
+
+        if (methodsError) throw methodsError;
+        if (statusError) throw statusError;
+        
+        res.json({ methods, status });
+    } catch (error) {
+        console.error("Error fetching deposit info:", error);
+        res.status(500).json({ error: 'Failed to fetch deposit information.' });
+    }
+});
+
 
 // ✅ UPDATED: The /recharge endpoint now accepts and saves the screenshot URL.
 app.post('/api/recharge', authenticateToken, async (req, res) => {
