@@ -159,75 +159,44 @@ const getNumberProperties = (num) => {
 // ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
-
+    if (!username || !mobile || !password) {
+        return res.status(400).json({ error: 'Username, mobile, and password are required' });
+    }
+    if (!/^\d{10}$/.test(mobile)) {
+        return res.status(400).json({ error: 'Mobile number must be 10 digits' });
+    }
     try {
-        // Step 1: Validate input
-        if (!username || !mobile || !password) {
-            return res.status(400).json({ error: "Username, mobile, and password are required." });
+        const { data: existingUsers } = await supabase.from('users').select('id').eq('mobile', mobile);
+        if (existingUsers && existingUsers.length > 0) {
+            return res.status(400).json({ error: 'User already exists with this mobile number' });
         }
-
-        // Step 2: Check if user already exists
-        const { data: existingUser } = await supabase
-            .from('users')
-            .select('id')
-            .eq('mobile', mobile)
-            .single();
-
-        if (existingUser) {
-            return res.status(400).json({ error: 'A user with this mobile number already exists.' });
-        }
-
-        // Step 3: Handle referral
-        let referredById = null;
-        if (referralCode) {
-            const { data: referrer } = await supabase
-                .from('users')
-                .select('id')
-                .eq('referral_code', referralCode)
-                .single();
-            
-            if (referrer) {
-                referredById = referrer.id;
-            } else {
-                return res.status(400).json({ error: 'Invalid referral code.' });
-            }
-        }
-
-        // Step 4: Create the user in Supabase Auth
-        const { data: { user }, error: authError } = await supabase.auth.signUp({
-            phone: mobile,
-            password: password,
-            options: { data: { display_name: username } }
-        });
-
-        if (authError) throw authError;
-        if (!user) throw new Error("User creation failed in authentication service.");
-
-        // Step 5: Create user profile in the public 'users' table
-        const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
-        const ipUsername = `IP${Math.floor(100000 + Math.random() * 900000)}`;
         
-        const { error: profileError } = await supabase
-            .from('users')
-            .insert({
-                id: user.id,
-                name: username,
-                mobile: mobile,
-                referral_code: uniqueReferralCode,
-                referred_by: referredById,
-                ip_username: ipUsername
-                // DO NOT store the password here. Auth is handled by Supabase.
-            });
+        let referredById = null;
+        if (referralCode && referralCode.trim() !== '') {
+            const parsedCode = parseInt(referralCode, 10);
+            if(isNaN(parsedCode)) return res.status(400).json({ error: 'Invalid referral code format.' });
+            
+            const { data: referrer } = await supabase.from('users').select('id').eq('id', parsedCode).single();
+            if (!referrer) return res.status(400).json({ error: 'Invalid referral code' });
+            referredById = referrer.id;
+        }
 
-        if (profileError) throw profileError;
+        const { data: newUser, error } = await supabase.from('users').insert([{
+            name: username,
+            email: `${mobile}@investmentplus.com`,
+            password,
+            mobile,
+            balance: 50,
+            referred_by: referredById,
+        }]).select().single();
 
-        // Step 6: Generate and return a JWT token for the new user
-        const token = jwt.sign({ id: user.id, mobile: user.phone }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        res.status(201).json({ message: 'User registered successfully!', token });
+        if (error) throw error;
 
+        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        res.status(201).json({ message: 'User registered successfully', token, user: { id: newUser.id, name: newUser.name, is_admin: newUser.is_admin } });
     } catch (error) {
-        console.error("Registration Error:", error);
-        res.status(500).json({ error: error.message || 'An error occurred during registration.' });
+        console.error('Registration error:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
