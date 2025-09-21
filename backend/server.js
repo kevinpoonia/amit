@@ -157,7 +157,6 @@ const getNumberProperties = (num) => {
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
 // ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
-// ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
 
@@ -212,7 +211,8 @@ app.post('/api/register', async (req, res) => {
                 name: username,
                 mobile: mobile,
                 referral_code: uniqueReferralCode,
-                referred_by: referredById
+                referred_by: referredById,
+                ip_username: `IP${Math.floor(100000 + Math.random() * 900000)}`
             })
             .select()
             .single();
@@ -228,6 +228,7 @@ app.post('/api/register', async (req, res) => {
         res.status(500).json({ error: error.message || 'An unexpected error occurred during registration.' });
     }
 });
+
 
 
 // ✅ UPDATED: Login now creates a welcome notification
