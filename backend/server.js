@@ -336,48 +336,25 @@ app.get('/api/deposit-info', authenticateToken, async (req, res) => {
 
 
 // ✅ UPDATED: The /recharge endpoint now securely handles file uploads from the server.
-app.post('/api/recharge', authenticateToken, upload.single('screenshot'), async (req, res) => {
-    const { amount, utr } = req.body;
-    const screenshotFile = req.file;
-
-    if (!amount || amount <= 0 || !utr || utr.trim() === '' || !screenshotFile) { 
-        return res.status(400).json({ error: 'Valid amount, UTR, and a payment screenshot are required' }); 
+// ✅ UPDATED: The /recharge endpoint now treats the screenshotUrl as optional.
+app.post('/api/recharge', authenticateToken, async (req, res) => {
+    // The screenshot is now optional, so we remove it from the validation.
+    const { amount, utr, screenshotUrl } = req.body; 
+    if (!amount || amount <= 0 || !utr || utr.trim() === '') { 
+        return res.status(400).json({ error: 'Valid amount and UTR are required' }); 
     }
-
     try {
-        const userId = req.user.id;
-        const filePath = `${userId}/${Date.now()}_${screenshotFile.originalname}`;
-
-        // Upload the file from the server's memory to Supabase Storage
-        const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('payment-screenshots')
-            .upload(filePath, screenshotFile.buffer, {
-                contentType: screenshotFile.mimetype,
-            });
-
-        if (uploadError) throw uploadError;
-
-        // Get the public URL of the uploaded file
-        const { data: urlData } = supabase.storage
-            .from('payment-screenshots')
-            .getPublicUrl(uploadData.path);
-        
-        const screenshotUrl = urlData.publicUrl;
-
-        // Insert the recharge request with the new screenshot URL
-        const { error: insertError } = await supabase.from('recharges').insert([
-            { user_id: userId, amount, utr: utr.trim(), screenshot_url: screenshotUrl }
+        const { error } = await supabase.from('recharges').insert([
+            // screenshot_url can now be null if not provided
+            { user_id: req.user.id, amount, utr: utr.trim(), screenshot_url: screenshotUrl } 
         ]);
-
-        if (insertError) throw insertError;
-        
+        if (error) throw error;
         res.json({ message: 'Recharge request submitted successfully.' });
     } catch (error) {
         console.error("Recharge error:", error);
         res.status(500).json({ error: 'Failed to submit recharge request.' });
     }
 });
-
 
 // ✅ UPDATED: Withdraw endpoint now uses the new database function
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
