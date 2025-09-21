@@ -422,7 +422,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This endpoint now correctly joins with product_plans to get the canonical plan name.
+// ✅ UPDATED: This endpoint has been corrected to fix the SyntaxError.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -455,12 +455,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
-        res.json({ investments: formattedData });
-    } catch (error) {
-        console.error("Failed to fetch investments:", error);
-        res.status(500).json({ error: 'Failed to fetch user investments.' });
-    }
-});
+
 
 // ✅ UPDATED: This endpoint now correctly fetches and formats ALL transaction types.
 app.get('/api/transactions', authenticateToken, async (req, res) => {
