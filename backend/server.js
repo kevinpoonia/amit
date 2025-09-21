@@ -156,29 +156,75 @@ const getNumberProperties = (num) => {
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
+// ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
-    if (!username || !mobile || !password) { return res.status(400).json({ error: 'Missing required fields' }); }
-    try {
-        const ip_username = generateIpUsername(username);
-        const { data: existingUser } = await supabase.from('users').select('id').or(`mobile.eq.${mobile},ip_username.eq.${ip_username}`).limit(1);
-        if (existingUser && existingUser.length > 0) { return res.status(400).json({ error: 'User with this mobile or username format already exists' }); }
 
-        let referredById = null;
-        if (referralCode && referralCode.trim() !== '') {
-            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
-            if (!referrer) { return res.status(400).json({ error: 'Invalid referral code provided.' }); }
-            referredById = referrer.id;
+    try {
+        // Step 1: Check if user already exists
+        const { data: existingUser, error: existingUserError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('mobile', mobile)
+            .single();
+
+        if (existingUser) {
+            return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
 
-        const { data: newUser, error: insertError } = await supabase.from('users').insert([{ name: username, mobile, password, ip_username, referred_by: referredById, email: `${mobile}@example.com`, balance: 50 }]).select().single();
-        if (insertError) throw insertError;
+        // Step 2: Find the referrer if a code is provided
+        let referredById = null;
+        if (referralCode) {
+            const { data: referrer, error: referrerError } = await supabase
+                .from('users')
+                .select('id')
+                .eq('referral_code', referralCode)
+                .single();
+            
+            if (referrer) {
+                referredById = referrer.id;
+            } else {
+                return res.status(400).json({ error: 'Invalid referral code provided.' });
+            }
+        }
 
-        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({ message: 'User registered successfully', token });
+        // Step 3: Create the user in Supabase Auth
+        const { data: { user }, error: authError } = await supabase.auth.signUp({
+            phone: mobile,
+            password: password,
+            options: {
+                data: {
+                    display_name: username,
+                }
+            }
+        });
+
+        if (authError) throw authError;
+        if (!user) throw new Error("User creation failed in authentication service.");
+
+        // Step 4: Create the user profile in the public 'users' table
+        const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
+        const { data: newUserProfile, error: profileError } = await supabase
+            .from('users')
+            .insert({
+                id: user.id,
+                name: username,
+                mobile: mobile,
+                referral_code: uniqueReferralCode,
+                referred_by: referredById
+            })
+            .select()
+            .single();
+
+        if (profileError) throw profileError;
+
+        // Step 5: Generate and return a JWT token for the new user
+        const token = jwt.sign({ id: user.id, mobile: user.phone }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.status(201).json({ message: 'User registered successfully!', token });
+
     } catch (error) {
-        console.error('Register Error:', error);
-        res.status(500).json({ error: 'An error occurred during registration.' });
+        console.error("Registration Error:", error);
+        res.status(500).json({ error: error.message || 'An unexpected error occurred during registration.' });
     }
 });
 
