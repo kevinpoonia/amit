@@ -156,7 +156,7 @@ const getNumberProperties = (num) => {
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
-// ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability.
+// ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
 
