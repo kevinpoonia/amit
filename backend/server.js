@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron'); // ✅ FIX: This line was missing
+const multer = require('multer'); // Import multer
 
 // Load environment variables
 dotenv.config();
@@ -334,23 +335,49 @@ app.get('/api/deposit-info', authenticateToken, async (req, res) => {
 });
 
 
-// ✅ UPDATED: The /recharge endpoint now accepts and saves the screenshot URL.
-app.post('/api/recharge', authenticateToken, async (req, res) => {
-    const { amount, utr, screenshotUrl } = req.body;
-    if (!amount || amount <= 0 || !utr || utr.trim() === '' || !screenshotUrl) { 
+// ✅ UPDATED: The /recharge endpoint now securely handles file uploads from the server.
+app.post('/api/recharge', authenticateToken, upload.single('screenshot'), async (req, res) => {
+    const { amount, utr } = req.body;
+    const screenshotFile = req.file;
+
+    if (!amount || amount <= 0 || !utr || utr.trim() === '' || !screenshotFile) { 
         return res.status(400).json({ error: 'Valid amount, UTR, and a payment screenshot are required' }); 
     }
+
     try {
-        const { error } = await supabase.from('recharges').insert([
-            { user_id: req.user.id, amount, utr: utr.trim(), screenshot_url: screenshotUrl }
+        const userId = req.user.id;
+        const filePath = `${userId}/${Date.now()}_${screenshotFile.originalname}`;
+
+        // Upload the file from the server's memory to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('payment-screenshots')
+            .upload(filePath, screenshotFile.buffer, {
+                contentType: screenshotFile.mimetype,
+            });
+
+        if (uploadError) throw uploadError;
+
+        // Get the public URL of the uploaded file
+        const { data: urlData } = supabase.storage
+            .from('payment-screenshots')
+            .getPublicUrl(uploadData.path);
+        
+        const screenshotUrl = urlData.publicUrl;
+
+        // Insert the recharge request with the new screenshot URL
+        const { error: insertError } = await supabase.from('recharges').insert([
+            { user_id: userId, amount, utr: utr.trim(), screenshot_url: screenshotUrl }
         ]);
-        if (error) throw error;
+
+        if (insertError) throw insertError;
+        
         res.json({ message: 'Recharge request submitted successfully.' });
     } catch (error) {
         console.error("Recharge error:", error);
         res.status(500).json({ error: 'Failed to submit recharge request.' });
     }
 });
+
 
 // ✅ UPDATED: Withdraw endpoint now uses the new database function
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
@@ -1106,7 +1133,7 @@ app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('recharges')
-            .select('id, user_id, amount, utr, request_date, screenshot_url') // Added screenshot_url
+            .select('id, user_id, amount, utr, request_date, screenshot_url')
             .eq('status', 'pending')
             .order('request_date', { ascending: true });
         if (error) throw error;
