@@ -215,7 +215,7 @@ app.post('/api/register', async (req, res) => {
                 mobile: mobile,
                 referral_code: uniqueReferralCode,
                 referred_by: referredById,
-                ip_username: ipUsername,
+                ip_username: ipUsername
                 // DO NOT store the password here. Auth is handled by Supabase.
             });
 
@@ -230,6 +230,7 @@ app.post('/api/register', async (req, res) => {
         res.status(500).json({ error: error.message || 'An error occurred during registration.' });
     }
 });
+
 
 // ✅ UPDATED: Login now creates a welcome notification
 app.post('/api/login', async (req, res) => {
