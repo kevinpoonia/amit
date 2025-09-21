@@ -161,7 +161,12 @@ app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
 
     try {
-        // Step 1: Check if user already exists
+        // Step 1: Validate input
+        if (!username || !mobile || !password) {
+            return res.status(400).json({ error: "Username, mobile, and password are required." });
+        }
+
+        // Step 2: Check if user already exists
         const { data: existingUser } = await supabase
             .from('users')
             .select('id')
@@ -172,7 +177,7 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
 
-        // Step 2: Find the referrer if a code is provided
+        // Step 3: Handle referral
         let referredById = null;
         if (referralCode) {
             const { data: referrer } = await supabase
@@ -184,11 +189,11 @@ app.post('/api/register', async (req, res) => {
             if (referrer) {
                 referredById = referrer.id;
             } else {
-                return res.status(400).json({ error: 'Invalid referral code provided.' });
+                return res.status(400).json({ error: 'Invalid referral code.' });
             }
         }
 
-        // Step 3: Create the user in Supabase Auth
+        // Step 4: Create the user in Supabase Auth
         const { data: { user }, error: authError } = await supabase.auth.signUp({
             phone: mobile,
             password: password,
@@ -198,7 +203,7 @@ app.post('/api/register', async (req, res) => {
         if (authError) throw authError;
         if (!user) throw new Error("User creation failed in authentication service.");
 
-        // Step 4: Create the user profile in the public 'users' table
+        // Step 5: Create user profile in the public 'users' table
         const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
         const ipUsername = `IP${Math.floor(100000 + Math.random() * 900000)}`;
         
@@ -210,22 +215,21 @@ app.post('/api/register', async (req, res) => {
                 mobile: mobile,
                 referral_code: uniqueReferralCode,
                 referred_by: referredById,
-                ip_username: ipUsername
+                ip_username: ipUsername,
+                // DO NOT store the password here. Auth is handled by Supabase.
             });
 
         if (profileError) throw profileError;
 
-        // Step 5: Generate and return a JWT token for the new user
+        // Step 6: Generate and return a JWT token for the new user
         const token = jwt.sign({ id: user.id, mobile: user.phone }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.status(201).json({ message: 'User registered successfully!', token });
 
     } catch (error) {
         console.error("Registration Error:", error);
-        res.status(500).json({ error: error.message || 'An unexpected error occurred during registration.' });
+        res.status(500).json({ error: error.message || 'An error occurred during registration.' });
     }
 });
-
-
 
 // ✅ UPDATED: Login now creates a welcome notification
 app.post('/api/login', async (req, res) => {
