@@ -1131,16 +1131,20 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         const { data: recharge, error: fetchError } = await supabase.from('recharges').select('*').eq('id', id).single();
         if (fetchError || !recharge) return res.status(404).json({ error: 'Recharge not found.' });
         if (recharge.status !== 'pending') return res.status(400).json({ error: 'Recharge is not pending.' });
+        
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date() }).eq('id', id);
+        
         const { error: referralError } = await supabase.rpc('handle_deposit_referral', {
             depositing_user_id: recharge.user_id, deposit_id: recharge.id, deposit_amount: recharge.amount
         });
         if (referralError) console.error("Referral processing error:", referralError);
+        
         await supabase.from('notifications').insert({ user_id: recharge.user_id, type: 'deposit', message: `Your deposit of ₹${recharge.amount.toLocaleString()} has been approved.` });
         res.json({ message: 'Deposit approved, notification sent, and referral bonuses processed.' });
     } catch (err) { res.status(500).json({ error: 'Failed to approve deposit.' }); }
 });
+
 
 
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
