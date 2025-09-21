@@ -161,81 +161,73 @@ app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
 
     try {
-        // Step 1: Check if user already exists
-        const { data: existingUser, error: existingError } = await supabase
+        // Step 1: Validate input
+        if (!username || !mobile || !password) {
+            return res.status(400).json({ error: "Username, mobile, and password are required." });
+        }
+
+        // Step 2: Check if user already exists
+        const { data: existingUser, error: existingErr } = await supabase
             .from('users')
             .select('id')
             .eq('mobile', mobile)
-            .maybeSingle();
+            .single();
 
-        if (existingError) throw existingError;
         if (existingUser) {
             return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
 
-        // Step 2: Validate referral code if provided
+        // Step 3: Handle referral
         let referredById = null;
         if (referralCode) {
-            const { data: referrer, error: refError } = await supabase
+            const { data: referrer } = await supabase
                 .from('users')
                 .select('id')
                 .eq('referral_code', referralCode)
-                .maybeSingle();
+                .single();
 
-            if (refError) throw refError;
             if (referrer) {
                 referredById = referrer.id;
             } else {
-                return res.status(400).json({ error: 'Invalid referral code provided.' });
+                return res.status(400).json({ error: 'Invalid referral code.' });
             }
         }
 
-        // Step 3: Create user in Supabase Auth (use dummy email for mobile-based login)
-        const email = `${mobile}@mobile.local`; // fake email based on mobile
 
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: { display_name: username, mobile }
-            }
-        });
 
-        if (authError) throw authError;
-        if (!authData.user) throw new Error("User creation failed in authentication service.");
-
-        const userId = authData.user.id;
-
-        // Step 4: Insert into your custom users table
+        // Step 5: Create user profile in Supabase table
         const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
         const ipUsername = `IP${Math.floor(100000 + Math.random() * 900000)}`;
 
-        const { error: profileError } = await supabase
+        const { data: newUser, error: insertError } = await supabase
             .from('users')
-            .insert({
-                id: userId,
+            .insert([{
                 name: username,
-                mobile,
+                mobile: mobile,
+                password: hashedPassword,
                 referral_code: uniqueReferralCode,
                 referred_by: referredById,
                 ip_username: ipUsername
-            });
+            }])
+            .select()
+            .single();
 
-        if (profileError) throw profileError;
+        if (insertError) throw insertError;
 
-        // Step 5: Return a signed JWT
-        if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is not set in environment variables.");
-
-        const token = jwt.sign({ id: userId, mobile }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        // Step 6: Generate JWT token
+        const token = jwt.sign(
+            { id: newUser.id, mobile: newUser.mobile },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
 
         res.status(201).json({ message: 'User registered successfully!', token });
 
     } catch (error) {
         console.error("Registration Error:", error);
-        res.status(500).json({ error: error.message || 'Unexpected error occurred.' });
+        res.status(500).json({ error: error.message || 'An error occurred during registration.' });
     }
 });
-
 
 
 // ✅ UPDATED: Login now creates a welcome notification
