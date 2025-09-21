@@ -430,7 +430,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
 });
 
 
-// ✅ UPDATED: This endpoint now correctly joins with product_plans to get the canonical plan name and daily income.
+// ✅ UPDATED: This endpoint now correctly joins with product_plans to get the canonical plan name.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -442,7 +442,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
                 days_left,
                 created_at,
                 product_plans (
-                    plan_name,
+                    name, 
                     daily_income
                 )
             `)
@@ -453,7 +453,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         
         const formattedData = data.map(inv => ({
             ...inv,
-            plan_name: inv.product_plans ? inv.product_plans.plan_name : 'Unknown Plan',
+            plan_name: inv.product_plans ? inv.product_plans.name : 'Unknown Plan', // Use name from the join
             daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
         }));
 
@@ -463,8 +463,6 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user investments.' });
     }
 });
-
-
 
 // ✅ UPDATED: This endpoint now correctly fetches and formats ALL transaction types.
 app.get('/api/transactions', authenticateToken, async (req, res) => {
