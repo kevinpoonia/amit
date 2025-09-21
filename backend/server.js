@@ -161,13 +161,8 @@ app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
 
     try {
-        // Step 1: Validate input
-        if (!username || !mobile || !password) {
-            return res.status(400).json({ error: "Username, mobile, and password are required." });
-        }
-
-        // Step 2: Check if user already exists
-        const { data: existingUser, error: existingErr } = await supabase
+        // Step 1: Check if user already exists
+        const { data: existingUser } = await supabase
             .from('users')
             .select('id')
             .eq('mobile', mobile)
@@ -177,7 +172,7 @@ app.post('/api/register', async (req, res) => {
             return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
 
-        // Step 3: Handle referral
+        // Step 2: Find the referrer if a code is provided
         let referredById = null;
         if (referralCode) {
             const { data: referrer } = await supabase
@@ -185,49 +180,51 @@ app.post('/api/register', async (req, res) => {
                 .select('id')
                 .eq('referral_code', referralCode)
                 .single();
-
+            
             if (referrer) {
                 referredById = referrer.id;
             } else {
-                return res.status(400).json({ error: 'Invalid referral code.' });
+                return res.status(400).json({ error: 'Invalid referral code provided.' });
             }
         }
 
+        // Step 3: Create the user in Supabase Auth
+        const { data: { user }, error: authError } = await supabase.auth.signUp({
+            phone: mobile,
+            password: password,
+            options: { data: { display_name: username } }
+        });
 
+        if (authError) throw authError;
+        if (!user) throw new Error("User creation failed in authentication service.");
 
-        // Step 5: Create user profile in Supabase table
+        // Step 4: Create the user profile in the public 'users' table
         const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
         const ipUsername = `IP${Math.floor(100000 + Math.random() * 900000)}`;
-
-        const { data: newUser, error: insertError } = await supabase
+        
+        const { error: profileError } = await supabase
             .from('users')
-            .insert([{
+            .insert({
+                id: user.id,
                 name: username,
                 mobile: mobile,
-                password: hashedPassword,
                 referral_code: uniqueReferralCode,
                 referred_by: referredById,
                 ip_username: ipUsername
-            }])
-            .select()
-            .single();
+            });
 
-        if (insertError) throw insertError;
+        if (profileError) throw profileError;
 
-        // Step 6: Generate JWT token
-        const token = jwt.sign(
-            { id: newUser.id, mobile: newUser.mobile },
-            process.env.JWT_SECRET,
-            { expiresIn: '7d' }
-        );
-
+        // Step 5: Generate and return a JWT token for the new user
+        const token = jwt.sign({ id: user.id, mobile: user.phone }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.status(201).json({ message: 'User registered successfully!', token });
 
     } catch (error) {
         console.error("Registration Error:", error);
-        res.status(500).json({ error: error.message || 'An error occurred during registration.' });
+        res.status(500).json({ error: error.message || 'An unexpected error occurred during registration.' });
     }
 });
+
 
 
 // ✅ UPDATED: Login now creates a welcome notification
