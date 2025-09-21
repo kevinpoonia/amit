@@ -162,7 +162,7 @@ app.post('/api/register', async (req, res) => {
 
     try {
         // Step 1: Check if user already exists
-        const { data: existingUser, error: existingUserError } = await supabase
+        const { data: existingUser } = await supabase
             .from('users')
             .select('id')
             .eq('mobile', mobile)
@@ -175,7 +175,7 @@ app.post('/api/register', async (req, res) => {
         // Step 2: Find the referrer if a code is provided
         let referredById = null;
         if (referralCode) {
-            const { data: referrer, error: referrerError } = await supabase
+            const { data: referrer } = await supabase
                 .from('users')
                 .select('id')
                 .eq('referral_code', referralCode)
@@ -192,11 +192,7 @@ app.post('/api/register', async (req, res) => {
         const { data: { user }, error: authError } = await supabase.auth.signUp({
             phone: mobile,
             password: password,
-            options: {
-                data: {
-                    display_name: username,
-                }
-            }
+            options: { data: { display_name: username } }
         });
 
         if (authError) throw authError;
@@ -204,7 +200,9 @@ app.post('/api/register', async (req, res) => {
 
         // Step 4: Create the user profile in the public 'users' table
         const uniqueReferralCode = `${username.slice(0, 4)}${Math.floor(1000 + Math.random() * 9000)}`;
-        const { data: newUserProfile, error: profileError } = await supabase
+        const ipUsername = `IP${Math.floor(100000 + Math.random() * 900000)}`;
+        
+        const { error: profileError } = await supabase
             .from('users')
             .insert({
                 id: user.id,
@@ -212,10 +210,8 @@ app.post('/api/register', async (req, res) => {
                 mobile: mobile,
                 referral_code: uniqueReferralCode,
                 referred_by: referredById,
-                ip_username: `IP${Math.floor(100000 + Math.random() * 900000)}`
-            })
-            .select()
-            .single();
+                ip_username: ipUsername
+            });
 
         if (profileError) throw profileError;
 
