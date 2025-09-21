@@ -979,17 +979,28 @@ app.get('/api/lottery/state', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Failed to get lottery state.' }); }
 });
 
+// --- LOTTERY API ENDPOINTS ---
 app.post('/api/lottery/bet', authenticateToken, async (req, res) => {
     const { roundId, betAmount, selectedNumA, selectedNumB } = req.body;
     try {
         const { data: success, error } = await supabase.rpc('place_lottery_bet', {
-            p_user_id: req.user.id, p_round_id: roundId, p_bet_amount: betAmount,
-            p_num_a: selectedNumA, p_num_b: selectedNumB
+            p_user_id: req.user.id,
+            p_round_id: roundId,
+            p_bet_amount: betAmount,
+            p_num_a: selectedNumA,
+            p_num_b: selectedNumB
         });
-        if (error || !success) return res.status(400).json({ error: 'Bet failed. Insufficient balance or invalid data.' });
+
+        if (error || !success) {
+            return res.status(400).json({ error: 'Bet failed. Insufficient balance or invalid data.' });
+        }
         res.json({ message: 'Bet placed successfully!' });
-    } catch (e) { res.status(500).json({ error: 'Failed to place bet.' }); }
+    } catch (e) {
+        console.error("Lottery bet error:", e);
+        res.status(500).json({ error: 'Failed to place bet.' });
+    }
 });
+
 
 app.get('/api/lottery/live-stats/:roundId', authenticateToken, async (req, res) => {
     try {
