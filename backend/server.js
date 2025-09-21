@@ -429,19 +429,31 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); }
 });
 
-// ✅ FIX: This endpoint now correctly orders by 'start_date'
+
+// ✅ UPDATED: This endpoint now correctly joins with product_plans to get the canonical plan name and daily income.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('investments')
-            .select(`id, plan_name, amount, status, days_left, created_at, product_plans(daily_income)`)
+            .select(`
+                id,
+                amount,
+                status,
+                days_left,
+                created_at,
+                product_plans (
+                    plan_name,
+                    daily_income
+                )
+            `)
             .eq('user_id', req.user.id)
-            .order('created_at', { ascending: false }); // Corrected from 'start_date'
+            .order('created_at', { ascending: false });
 
         if (error) throw error;
         
         const formattedData = data.map(inv => ({
             ...inv,
+            plan_name: inv.product_plans ? inv.product_plans.plan_name : 'Unknown Plan',
             daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
         }));
 
@@ -454,7 +466,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
 
 
 
-// ✅ UPDATED: This endpoint now fetches daily income claims and excludes game bets.
+// ✅ UPDATED: This endpoint now correctly fetches and formats ALL transaction types.
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -464,14 +476,20 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
             supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId),
             supabase.from('daily_claims').select('id, amount, created_at').eq('user_id', userId)
         ]);
+
         const formatted = [];
-        (recharges || []).forEach(r => r.status === 'approved' && formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: 'Completed', date: r.created_at }));
+        (recharges || []).forEach(r => formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: r.status, date: r.created_at }));
         (withdrawals || []).forEach(w => formatted.push({ id: `wd-${w.id}`, type: 'Withdrawal', amount: -w.amount, status: w.status, date: w.created_at }));
         (investments || []).forEach(i => formatted.push({ id: `inv-${i.id}`, type: 'Plan Purchase', amount: -i.amount, status: 'Completed', date: i.created_at, description: i.plan_name }));
         (claims || []).forEach(c => formatted.push({ id: `claim-${c.id}`, type: 'Daily Income', amount: c.amount, status: 'Claimed', date: c.created_at }));
+        
         formatted.sort((a, b) => new Date(b.date) - new Date(a.date));
+        
         res.json({ transactions: formatted });
-    } catch (error) { res.status(500).json({ error: 'Failed to fetch transaction history.' }); }
+    } catch (error) { 
+        console.error("Error fetching transactions:", error);
+        res.status(500).json({ error: 'Failed to fetch transaction history.' }); 
+    }
 });
 
 
