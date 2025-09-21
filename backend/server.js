@@ -28,11 +28,23 @@ const corsOptions = {
     return callback(null, true);
   }
 };
+
 app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
 app.use(express.json());
 
 // Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
+
+
+// ✅ NEW: Added the missing currency formatter function to the server.
+const formatCurrency = (amount) => {
+    if (typeof amount !== 'number') amount = 0;
+    return new Intl.NumberFormat("en-IN", {
+        style: "currency",
+        currency: "INR",
+        maximumFractionDigits: 2
+    }).format(amount);
+};
 
 // ==========================================
 // ========== Daily Cron Job ================
