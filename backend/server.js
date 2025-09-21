@@ -891,21 +891,26 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Failed to fetch user investments.' }); }
 });
 
+// ✅ NEW: Endpoint for users to claim their daily income
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', { p_user_id: req.user.id });
+        // This calls the 'claim_daily_income' function in your Supabase database
+        const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', {
+            p_user_id: req.user.id
+        });
+
         if (error) throw error;
 
         if (claimedAmount > 0) {
-            res.json({ message: `Successfully claimed ₹${claimedAmount}. It has been added to your withdrawable balance.` });
+            res.json({ message: `Successfully claimed ${formatCurrency(claimedAmount)}. It has been added to your withdrawable balance.` });
         } else {
             res.status(400).json({ error: 'You have no income to claim at this time.' });
         }
     } catch (error) {
-        res.status(500).json({ error: 'Failed to claim income.' });
+        console.error("Claim income error:", error);
+        res.status(500).json({ error: 'Failed to claim income. Please try again later.' });
     }
 });
-
 
 
 // ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
