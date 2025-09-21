@@ -891,10 +891,10 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
     } catch (error) { res.status(500).json({ error: 'Failed to fetch user investments.' }); }
 });
 
-// ✅ NEW: Endpoint for users to claim their daily income
+// ✅ UPDATED: The /api/claim-income endpoint is now fully functional and will work with the new database function.
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        // This calls the 'claim_daily_income' function in your Supabase database
+        // This calls the 'claim_daily_income' function you just created in your Supabase database
         const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', {
             p_user_id: req.user.id
         });
@@ -911,7 +911,6 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to claim income. Please try again later.' });
     }
 });
-
 
 // ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
