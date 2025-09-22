@@ -206,22 +206,33 @@ app.post('/api/register', async (req, res) => {
             referredById = referrer.id;
         }
 
-        const { data: newUser, error } = await supabase.from('users').insert([{
+        const { data: newUser, error: insertError } = await supabase.from('users').insert([{
             name: username,
-            email: `${mobile}@investmentplus.com`,
+            email: `${mobile}@moneyplus.com`,
             password,
             mobile,
             balance: 50,
             referred_by: referredById,
         }]).select().single();
 
-        if (error) throw error;
+        if (insertError) throw insertError;
 
+        const namePart = username.replace(/[^a-zA-Z0-9]/g, '').substring(0, 5);
+        const ipUsername = `${namePart}_${newUser.id}`;
+
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({ ip_username: ipUsername })
+            .eq('id', newUser.id);
+
+        if (updateError) throw updateError;
+        
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.status(201).json({ message: 'User registered successfully', token, user: { id: newUser.id, name: newUser.name, is_admin: newUser.is_admin } });
+    
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ error: 'Internal server error during registration.' });
     }
 });
 
@@ -664,98 +675,87 @@ runAviatorCycle();
 // ========== LOTTERY GAME LOGIC ============
 // ==========================================
 
-const DRAW_TIMES_HOURS = [8, 12, 16, 20]; // 8 AM, 12 PM, 4 PM, 8 PM IST
-let adminLotteryChoice = { roundId: null, winning_num_a: null, winning_num_b: null };
-let lotteryMode = 'auto';
-
-const getNextDraw = () => {
+const getLotteryRoundId = () => {
     const now = new Date();
     const nowIST = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-    const todayIST = new Date(Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), nowIST.getUTCDate()));
-    for (let i = 0; i < DRAW_TIMES_HOURS.length; i++) {
-        const hour = DRAW_TIMES_HOURS[i];
-        const drawTime = new Date(todayIST);
-        drawTime.setUTCHours(hour, 0, 0, 0);
-        if (nowIST < drawTime) {
-            return { id: `${todayIST.toISOString().slice(0, 10)}-${hour}` };
-        }
-    }
-    const tomorrowIST = new Date(todayIST);
-    tomorrowIST.setUTCDate(todayIST.getUTCDate() + 1);
-    const nextDrawTime = new Date(tomorrowIST);
-    nextDrawTime.setUTCHours(DRAW_TIMES_HOURS[0], 0, 0, 0);
-    return { id: `${tomorrowIST.toISOString().slice(0, 10)}-${DRAW_TIMES_HOURS[0]}` };
+    const year = nowIST.getUTCFullYear();
+    const month = String(nowIST.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(nowIST.getUTCDate()).padStart(2, '0');
+    const hour = String(nowIST.getUTCHours()).padStart(2, '0');
+    return `${year}${month}${day}-${hour}`;
 };
 
-
-const calculateLotteryResult = async (roundId) => {
+const calculateLotteryResult = async (roundId, profitPreference) => {
     const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
     if (error) throw error;
 
     const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.bet_amount), 0);
-    let lowestPayout = Infinity;
-    let bestOutcome = { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) };
+    
+    // If no one has bet, return a truly random result
+    if (bets.length === 0) {
+        return { 
+            a: Math.floor(Math.random() * 10), 
+            b: Math.floor(Math.random() * 10)
+        };
+    }
+
+    let outcomes = [];
 
     for (let a = 0; a <= 9; a++) {
         for (let b = a; b <= 9; b++) {
             let currentPayout = 0;
+            let totalBetOnPair = 0;
             bets.forEach(bet => {
-                const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
                 const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
                 if (isDoubleBet) {
                     if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
                         currentPayout += bet.bet_amount * 25;
-                    }
-                } else if (isSingleBet) {
-                    if (bet.selected_num_a === a || bet.selected_num_a === b) {
-                        currentPayout += bet.bet_amount * 2.5;
+                        totalBetOnPair += bet.bet_amount;
                     }
                 }
             });
-            if (currentPayout < lowestPayout) {
-                lowestPayout = currentPayout;
-                bestOutcome = { a, b };
-            }
+            const netResult = totalBetIn - currentPayout;
+            outcomes.push({ a, b, payout: currentPayout, netResult, totalBetOnPair });
         }
     }
 
-    const maxLoss = totalBetIn * 0.05;
-    const netLoss = lowestPayout - totalBetIn;
+    outcomes.sort((x, y) => y.netResult - x.netResult);
 
-    if (netLoss > maxLoss) {
-        return { ...bestOutcome, jackpotRollover: true };
+    if (profitPreference === 'zero_profit') {
+        const nearZeroProfitOutcomes = outcomes.filter(o => o.netResult >= -(totalBetIn * 0.1)); // Allow up to 10% loss
+        if (nearZeroProfitOutcomes.length > 0) {
+            return nearZeroProfitOutcomes[Math.floor(Math.random() * nearZeroProfitOutcomes.length)];
+        }
     }
-    return { ...bestOutcome, jackpotRollover: false };
+    
+    // Default to max_profit
+    const topOutcomes = outcomes.slice(0, Math.min(3, outcomes.length));
+    return topOutcomes[Math.floor(Math.random() * topOutcomes.length)];
 };
+
 
 const processLotteryRound = async (roundId) => {
     console.log(`Processing lottery for round: ${roundId}`);
-    let result;
     
-    if (lotteryMode === 'admin' && adminLotteryChoice.roundId === roundId && adminLotteryChoice.winning_num_a !== null) {
-        result = { a: adminLotteryChoice.winning_num_a, b: adminLotteryChoice.winning_num_b, jackpotRollover: false };
-    } else {
-        result = await calculateLotteryResult(roundId);
+    const { data: gameState, error: stateError } = await supabase.from('game_state').select('lottery_profit_preference').single();
+    if (stateError) {
+        console.error("Could not fetch game state for lottery processing:", stateError);
+        return;
     }
+
+    const result = await calculateLotteryResult(roundId, gameState.lottery_profit_preference);
 
     const { data: bets, error } = await supabase.from('lottery_bets').select('*, users(name)').eq('round_id', roundId);
     if (error) { console.error("Error fetching bets for payout:", error); return; }
 
     const winners = [];
     for (const bet of bets) {
-        const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
-        const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
         let payout = 0;
         let status = 'lost';
-
-        if (isDoubleBet && !result.jackpotRollover) {
+        const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
+        if (isDoubleBet) {
              if ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a)) {
                 payout = bet.bet_amount * 25;
-                status = 'won';
-            }
-        } else if (isSingleBet) {
-             if (bet.selected_num_a === result.a || bet.selected_num_a === result.b) {
-                payout = bet.bet_amount * 2.5;
                 status = 'won';
             }
         }
@@ -771,29 +771,18 @@ const processLotteryRound = async (roundId) => {
         round_id: roundId,
         winning_num_a: result.a,
         winning_num_b: result.b,
-        jackpot_rolled_over: result.jackpotRollover,
         winner_count: winners.length,
         sample_winner_name: winners.length > 0 ? winners[Math.floor(Math.random() * winners.length)] : null
     });
     
-    const nextDraw = getNextDraw();
-    await supabase.from('lottery_rounds').insert({
-        round_id: nextDraw.id,
-        base_player_count: Math.floor(Math.random() * 150) + 100,
-        total_pool_amount: Math.floor(Math.random() * 200000) + 50000
-    });
-    
-    console.log(`Round ${roundId} processed. Winning numbers: ${result.a}, ${result.b}. Rollover: ${result.jackpotRollover}`);
+    console.log(`Round ${roundId} processed. Winning numbers: ${result.a}, ${result.b}.`);
 };
 
-DRAW_TIMES_HOURS.forEach((hour) => {
-    cron.schedule(`0 ${hour} * * *`, () => {
-        const now = new Date();
-        const roundId = `${now.toISOString().slice(0, 10)}-${hour}`;
-        processLotteryRound(roundId);
-    }, { timezone: "Asia/Kolkata" });
+// Cron job to run at the start of every hour
+cron.schedule('0 * * * *', () => {
+    const roundId = getLotteryRoundId();
+    processLotteryRound(roundId);
 });
-
 
 
 
