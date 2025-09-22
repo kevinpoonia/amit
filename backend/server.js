@@ -932,8 +932,14 @@ async function processRoundResults(period) {
             await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
         }
         
-        const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
-        broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
+       // This is inside processRoundResults()
+const { data: updatedResults } = await supabase
+    .from('game_results') // It correctly reads from the main results table
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
         
         // ✅ ADDED: Log to confirm the function finished and broadcasted
         console.log(`[processRoundResults] SUCCESS for period ${period}. Result broadcast sent.`);
