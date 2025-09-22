@@ -1623,6 +1623,57 @@ app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
 
 
 // --- ADMIN LOTTERY ENDPOINTS ---
+// ✅ FIX: Added the missing /api/admin/lottery-analysis endpoint
+app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
+    const { roundId } = req.query;
+    if (!roundId) {
+        return res.status(400).json({ error: 'Round ID is required.' });
+    }
+    try {
+        const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
+        if (error) throw error;
+
+        if (!bets || bets.length === 0) {
+            return res.json({ outcomes: [] });
+        }
+
+        const totalBetIn = bets.reduce((sum, bet) => sum + Number(bet.bet_amount), 0);
+        const outcomes = [];
+
+        for (let a = 0; a <= 9; a++) {
+            for (let b = a; b <= 9; b++) {
+                let currentPayout = 0;
+                let totalBetOnPair = 0;
+
+                bets.forEach(bet => {
+                    const isSingleBet = bet.selected_num_b === null;
+                    if (isSingleBet) {
+                        if (bet.selected_num_a === a || bet.selected_num_a === b) {
+                             currentPayout += Number(bet.bet_amount) * 2.5;
+                        }
+                    } else { // Double bet
+                        if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
+                            currentPayout += Number(bet.bet_amount) * 25;
+                            totalBetOnPair += Number(bet.bet_amount);
+                        }
+                    }
+                });
+                
+                const netResult = totalBetIn - currentPayout;
+                outcomes.push({ a, b, payout: currentPayout, netResult, totalBetOnPair });
+            }
+        }
+        
+        outcomes.sort((x, y) => y.netResult - x.netResult); // Sort by most profitable for admin
+        
+        res.json({ outcomes });
+    } catch (err) {
+        console.error('Lottery analysis error:', err);
+        res.status(500).json({ error: 'Failed to analyze lottery round.' });
+    }
+});
+
+
 app.get('/api/admin/lottery-analysis/:roundId', authenticateAdmin, async (req, res) => {
     const { roundId } = req.params;
     try {
