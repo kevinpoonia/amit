@@ -1939,7 +1939,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 const wss = new WebSocketServer({ server });
 
-// In server.js
+
+
+// In server.js, find the block at the bottom of the file that starts with `wss.on('connection', ...)`
+// and replace the WHOLE block with this one.
 
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
@@ -1948,32 +1951,35 @@ wss.on('connection', ws => {
         try {
             const data = JSON.parse(message.toString());
 
-            // We only care about messages with a 'bet' action
+            // Check if the incoming message is a bet for the color prediction game
             if (data.game === 'color-prediction' && data.action === 'bet') {
+                
                 const { amount, bet_on, token } = data.payload;
 
-                // 1. Authenticate the user from the token in the message
+                // 1. Authenticate the user from the token sent in the message
                 if (!token) return;
                 const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user) return;
+                if (!user || !user.id) return; // Invalid token or missing user ID
 
-                // 2. Get the current game state to check if betting is allowed
+                // 2. Get the current game state to check if betting is still open
                 const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
                 const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
                 
                 if (timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
-                    // 3. Process the bet (deduct balance and insert into DB)
+                    
+                    // 3. Deduct the user's balance using your Supabase function
                     const { error: betError } = await supabase.rpc('handle_bet_deduction', { 
                         p_user_id: user.id, 
                         p_amount: amount 
                     });
 
                     if (betError) {
-                        // Optional: Send an error message back to this specific client
-                        ws.send(JSON.stringify({ type: 'ERROR', message: 'Insufficient balance.' }));
+                        // Send an error message back to this specific client
+                        ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Insufficient balance.' }));
                         return;
                     }
                     
+                    // 4. Save the successful bet to the database
                     await supabase.from('bets').insert([{ 
                         user_id: user.id, 
                         game_period: gameState.current_period, 
@@ -1981,10 +1987,14 @@ wss.on('connection', ws => {
                         bet_on 
                     }]);
                     
-                    // Optional: Send a confirmation back to the client
-                    ws.send(JSON.stringify({ type: 'BET_CONFIRMED', message: 'Bet placed!' }));
+                    console.log(`Bet of ${amount} on ${bet_on} by user ${user.id} was successful for period ${gameState.current_period}.`);
+                    
+                    // 5. Send a success confirmation back to the client
+                    ws.send(JSON.stringify({ type: 'BET_SUCCESS', message: 'Bet placed!' }));
+
                 } else {
-                    ws.send(JSON.stringify({ type: 'ERROR', message: 'Betting window has closed.' }));
+                    // Send an error if the betting window is closed
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
                 }
             }
         } catch (e) {
@@ -1992,10 +2002,10 @@ wss.on('connection', ws => {
         }
     });
 
-    ws.on('close', () => console.log('Client disconnected'));
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
 });
-
-
 
 // Simple function to send data to ALL connected users
 function broadcast(data) {
