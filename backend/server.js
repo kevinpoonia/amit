@@ -880,13 +880,17 @@ let gameTimer;
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
 
+// In server.js
+
 async function processRoundResults(period) {
-    console.log(`Processing results for period ${period}...`);
+    // ✅ ADDED: Log to confirm the function starts
+    console.log(`[processRoundResults] Starting for period: ${period}`);
+    
     try {
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
         if (betsError) throw betsError;
         if (!bets || bets.length === 0) {
-            console.log(`No bets to process for period ${period}.`);
+            console.log(`[processRoundResults] No bets to process for period ${period}.`);
             return;
         }
 
@@ -930,9 +934,13 @@ async function processRoundResults(period) {
         
         const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
         broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
-        console.log(`Finished processing results for period ${period}. Winning number: ${winningNumber}`);
+        
+        // ✅ ADDED: Log to confirm the function finished and broadcasted
+        console.log(`[processRoundResults] SUCCESS for period ${period}. Result broadcast sent.`);
+
     } catch (e) {
-        console.error(`Error processing results for period ${period}:`, e);
+        // ✅ ADDED: Log to catch any errors during processing
+        console.error(`[processRoundResults] ERROR processing period ${period}:`, e);
     }
 }
 
