@@ -868,6 +868,13 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
  * This function contains ALL your original logic for calculating a winner and paying them.
  * It's now separate from the timer.
  */
+let gameTimer;
+const GAME_DURATION_SECONDS = 60;
+const BETTING_WINDOW_SECONDS = 50;
+
+/**
+ * This function contains ALL your original logic for calculating a winner and paying them.
+ */
 async function processRoundResults(period) {
     console.log(`Processing results for period ${period}...`);
     try {
@@ -941,13 +948,14 @@ async function processRoundResults(period) {
 async function gameLoop() {
     if (gameTimer) clearInterval(gameTimer);
 
+    // Get the current state from the database
     const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').single();
     if (gsError) {
-        console.error("Could not start game loop:", gsError);
-        return;
+        console.error("CRITICAL: Could not start game loop. Failed to fetch game state:", gsError);
+        return; // Stop the loop if we can't get the state
     }
 
-    // Process results for the round that just ended
+    // Process results for the round that just "finished"
     await processRoundResults(gs.current_period);
     
     // Start the new round's countdown
@@ -962,12 +970,14 @@ async function gameLoop() {
         nextPeriod = Number(yyyymmdd + "0001");
     }
     
-    await supabase.from('game_state').update({ current_period: nextPeriod, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+    await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
     console.log(`Starting new round: ${nextPeriod}`);
 
     let timeLeft = GAME_DURATION_SECONDS;
     gameTimer = setInterval(() => {
         const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
+        
+        // This is the message your frontend is waiting for!
         broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
         
         timeLeft--;
