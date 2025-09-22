@@ -5,6 +5,8 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
 const cron = require('node-cron'); // ✅ FIX: This line was missing
 const multer = require('multer'); // Import multer
+// At the top with other imports
+const { WebSocketServer } = require('ws');
 
 // Load environment variables
 dotenv.config();
@@ -1942,7 +1944,24 @@ setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
 // ==========================================
 // ============== SERVER START ==============
 // ==========================================
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
 
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', ws => {
+    console.log('Client connected to WebSocket');
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
+});
+
+// Simple function to send data to ALL connected users
+function broadcast(data) {
+    wss.clients.forEach(client => {
+        if (client.readyState === 1) { // 1 means OPEN
+            client.send(JSON.stringify(data));
+        }
+    });
+}
