@@ -155,10 +155,6 @@ const getNumberProperties = (num) => {
 };
 
 // ✅ FIX: Changed to a function declaration to ensure it's hoisted and available everywhere.
-function formatCurrency(amount) {
-    if (typeof amount !== 'number') amount = 0;
-    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(amount);
-};
 
 function getLotteryRoundId() {
     const now = new Date();
