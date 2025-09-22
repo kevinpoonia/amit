@@ -808,29 +808,86 @@ cron.schedule('0 * * * *', () => {
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
 // ==========================================
+// In server.js, replace the entire game logic section with this:
+
+// ==========================================
+// ========== GAME LOGIC & ENDPOINTS ========
+// ==========================================
+
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
+let gameTimer;
 
-async function runGameCycle() {
+// This endpoint is now only for when a user first loads the game page.
+app.get('/api/game-state', authenticateToken, async (req, res) => {
     try {
-        const { data: gameState, error } = await supabase.from('game_state').select('*').single();
-        if (error || !gameState || !gameState.is_on) return;
+        const { data: results } = await supabase.from('game_results')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(20);
+        res.json({ results: results || [] });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch initial game history.' });
+    }
+});
 
-        const today = new Date();
-        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-        const lastPeriodStr = gameState.current_period.toString();
-        const lastDatePart = lastPeriodStr.substring(0, 8);
-
-        let nextPeriod;
-        if (lastDatePart === yyyymmdd) {
-            nextPeriod = Number(gameState.current_period) + 1;
+app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
+    const { period } = req.params;
+    const userId = req.user.id;
+    if (!period) {
+        return res.status(400).json({ error: 'Game period is required.' });
+    }
+    try {
+        const { data: bets, error } = await supabase
+            .from('bets')
+            .select('payout')
+            .eq('user_id', userId)
+            .eq('game_period', period);
+        if (error) throw error;
+        if (!bets || bets.length === 0) {
+            return res.json({ status: 'did_not_play' });
+        }
+        const totalPayout = bets.reduce((sum, bet) => sum + (bet.payout || 0), 0);
+        if (totalPayout > 0) {
+            return res.json({ status: 'won', payout: totalPayout });
         } else {
-            nextPeriod = Number(yyyymmdd + "0001");
+            return res.json({ status: 'lost' });
+        }
+    } catch (err) {
+        console.error("Error fetching user's bet result:", err);
+        res.status(500).json({ error: "Failed to fetch your result for the round." });
+    }
+});
+
+
+// ==========================================
+// ========== NEW WEBSOCKET GAME LOOP ========
+// ==========================================
+
+/**
+ * This function contains ALL your original logic for calculating a winner and paying them.
+ * It's now separate from the timer.
+ */
+async function processRoundResults(period) {
+    console.log(`Processing results for period ${period}...`);
+    try {
+        const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
+        if (betsError) {
+            console.error("Error fetching bets for result processing:", betsError);
+            return;
+        }
+        if (!bets || bets.length === 0) {
+            console.log(`No bets to process for period ${period}.`);
+            return;
         }
 
-        const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', gameState.current_period);
-        if (betsError) { console.error("Error fetching bets:", betsError); return; }
-
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('*').single();
+        if (gsError) {
+            console.error("Error fetching game state for result processing:", gsError);
+            return;
+        }
+        
+        // 1. DETERMINE WINNING NUMBER (Your original logic is pasted here)
         let winningNumber;
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
@@ -845,107 +902,74 @@ async function runGameCycle() {
                     totalPayouts[i] += parseFloat(bet.amount) * multiplier;
                 }
             });
-
-            if (gameState.payout_priority === 'users' && bets.length > 0) {
-                // User Priority Logic
-                const colorBets = { Red: 0, Green: 0, Violet: 0 };
-                const numberBets = Array(10).fill(0);
-                bets.forEach(bet => {
-                    if (['Red', 'Green', 'Violet'].includes(bet.bet_on)) {
-                        colorBets[bet.bet_on] += parseFloat(bet.amount);
-                    } else if (!isNaN(parseInt(bet.bet_on))) {
-                        numberBets[parseInt(bet.bet_on)] += parseFloat(bet.amount);
-                    }
-                });
-                
-                const totalColorBet = Object.values(colorBets).reduce((a, b) => a + b, 0);
-                const totalNumberBet = numberBets.reduce((a, b) => a + b, 0);
-
-                if (totalColorBet >= totalNumberBet) {
-                    const mostBetColor = Object.keys(colorBets).reduce((a, b) => colorBets[a] > colorBets[b] ? a : b);
-                    const colorMap = {
-                        Red: [1, 3, 7, 9, 0, 5],
-                        Green: [2, 4, 6, 8, 5],
-                        Violet: [0, 5]
-                    };
-                    const potentialNumbers = colorMap[mostBetColor];
-                    winningNumber = potentialNumbers[Math.floor(Math.random() * potentialNumbers.length)];
-                } else {
-                    winningNumber = numberBets.indexOf(Math.max(...numberBets));
-                }
-            } else {
-                // Admin Priority Logic (default)
-                const minPayout = Math.min(...totalPayouts);
-                const lowestPayoutNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
-                winningNumber = lowestPayoutNumbers[Math.floor(Math.random() * lowestPayoutNumbers.length)];
-            }
+            const minPayout = Math.min(...totalPayouts);
+            const lowestPayoutNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
+            winningNumber = lowestPayoutNumbers[Math.floor(Math.random() * lowestPayoutNumbers.length)];
         }
-        
+
+        console.log(`Winning number for period ${period} is ${winningNumber}`);
         const winningColors = getNumberProperties(winningNumber);
-        await supabase.from('game_results').insert({ game_period: gameState.current_period, result_number: winningNumber });
-        
+        await supabase.from('game_results').insert({ game_period: period, result_number: winningNumber });
+
+        // 2. PAY THE WINNERS
         for (const bet of bets) {
-            let payout = 0; 
+            let payout = 0;
             let status = 'lost';
             if (bet.bet_on == winningNumber.toString() || winningColors.includes(bet.bet_on)) {
                 status = 'won';
                 if (bet.bet_on == winningNumber.toString()) payout += parseFloat(bet.amount) * 9.2;
                 if (winningColors.includes(bet.bet_on)) payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
             }
-            
-            if (payout > 0) await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+            if (payout > 0) {
+                await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+            }
             await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
         }
 
-        await supabase.from('game_state').update({
-            current_period: nextPeriod,
-            countdown_start_time: new Date().toISOString(),
-            next_result: null
-        }).eq('id', 1);
-        
-// ✅ ADD THIS BROADCAST MESSAGE RIGHT AFTER THE DATABASE UPDATE:
-    // This tells all connected frontends that a new round has started and what the result of the last one was.
-    const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
-    broadcast({
-        type: 'NEW_ROUND_AND_RESULT',
-        results: results,
-        newPeriod: nextPeriod
-    });
-}  //till here
-    
+        // 3. BROADCAST THE FINAL RESULTS TO ALL PLAYERS
+        const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
+        broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
+
     } catch (e) {
-        console.error("Game Cycle Error:", e);
+        console.error(`Error processing results for period ${period}:`, e);
     }
 }
-// server.js
 
-// REMOVE your entire setInterval(runGameCycle, ...) at the bottom.
-// DELETE the existing runGameCycle function.
-
-// ADD this new, improved game loop logic.
-
-let gameTimer;
-const GAME_DURATION = 60; // seconds
-
+/**
+ * This function ONLY manages the timer and the flow of the game.
+ */
 async function gameLoop() {
-    console.log("Starting new game cycle...");
     if (gameTimer) clearInterval(gameTimer);
 
-    // 1. Process the results of the PREVIOUS round first
-    // (This requires knowing the previous period, which we'll manage)
-    const { data: gs } = await supabase.from('game_state').select('current_period').single();
-    if (gs) {
-        await processRoundResults(gs.current_period); // We will create this function
+    const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').single();
+    if (gsError) {
+        console.error("Could not start game loop:", gsError);
+        return;
+    }
+
+    // Process results for the round that just ended
+    await processRoundResults(gs.current_period);
+    
+    // Start the new round's countdown
+    const today = new Date();
+    const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+    const lastPeriodStr = gs.current_period.toString();
+    const lastDatePart = lastPeriodStr.substring(0, 8);
+    let nextPeriod;
+    if (lastDatePart === yyyymmdd) {
+        nextPeriod = Number(gs.current_period) + 1;
+    } else {
+        nextPeriod = Number(yyyymmdd + "0001");
     }
     
-    // 2. Start the NEW round
-    const newPeriod = generateNewPeriod(); // We will create this helper
-    await supabase.from('game_state').update({ current_period: newPeriod, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+    await supabase.from('game_state').update({ current_period: nextPeriod, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+    console.log(`Starting new round: ${nextPeriod}`);
 
-    let timeLeft = GAME_DURATION;
-
+    let timeLeft = GAME_DURATION_SECONDS;
     gameTimer = setInterval(() => {
-        broadcast({ type: 'TIMER_UPDATE', timeLeft });
+        const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
+        broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
+        
         timeLeft--;
 
         if (timeLeft < 0) {
@@ -955,43 +979,20 @@ async function gameLoop() {
     }, 1000);
 }
 
-async function processRoundResults(period) {
-    // MOVE all the logic from your OLD runGameCycle function here
-    // (calculating winner, paying users, inserting into game_results)
-    console.log(`Processing results for period ${period}...`);
-    // ... logic ...
-    
-    // After processing, send the final result to everyone
-    const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
-    broadcast({ type: 'ROUND_RESULT', results });
-}
-
-function generateNewPeriod() {
-    const today = new Date();
-    const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const lastFour = String(Date.now()).slice(-4); // simple way to get a running number
-    return Number(yyyymmdd + lastFour);
-}
-
-// Start the game loop!
-gameLoop();
-
 
 
 app.get('/api/game-state', authenticateToken, async (req, res) => {
-    const { data: gameState, error } = await supabase.from('game_state').select('*').single();
-    if (error) return res.status(500).json({ error: 'Failed to fetch game state' });
-    
-    if (gameState.maintenance_mode && !gameState.whitelisted_users.includes(req.user.id)) {
-        return res.json({ maintenance: true });
+    try {
+        const { data: results } = await supabase.from('game_results')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(20);
+        res.json({ results: results || [] });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch initial game history.' });
     }
-    
-    const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
-    const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
-    const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
-    
-    res.json({ ...gameState, time_left: timeLeft > 0 ? timeLeft : 0, can_bet: canBet, results });
 });
+
 
 // src/backend/server.js
 
