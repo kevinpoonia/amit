@@ -34,8 +34,10 @@ const corsOptions = {
     optionsSuccessStatus: 204,
 };
 
-app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://moneyplus.today'] }));
+app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
 app.use(express.json());
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Enable pre-flight for all routes
 
 // Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
@@ -205,6 +207,7 @@ app.post('/api/register', async (req, res) => {
     if (!/^\d{10}$/.test(mobile)) {
         return res.status(400).json({ error: 'Mobile number must be 10 digits' });
     }
+
     try {
         const { data: existingUsers } = await supabase.from('users').select('id').eq('mobile', mobile);
         if (existingUsers && existingUsers.length > 0) {
@@ -213,15 +216,13 @@ app.post('/api/register', async (req, res) => {
         
         let referredById = null;
         if (referralCode && referralCode.trim() !== '') {
-            const parsedCode = parseInt(referralCode, 10);
-            if(isNaN(parsedCode)) return res.status(400).json({ error: 'Invalid referral code format.' });
-            
-            const { data: referrer } = await supabase.from('users').select('id').eq('id', parsedCode).single();
-            if (!referrer) return res.status(400).json({ error: 'Invalid referral code' });
-            referredById = referrer.id;
+            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
+            if (referrer) {
+                referredById = referrer.id;
+            }
         }
 
-        const { data: newUser, error: insertError } = await supabase.from('users').insert([{
+        const { data: newUser, error } = await supabase.from('users').insert([{
             name: username,
             email: `${mobile}@moneyplus.com`,
             password,
@@ -230,24 +231,36 @@ app.post('/api/register', async (req, res) => {
             referred_by: referredById,
         }]).select().single();
 
-        if (insertError) throw insertError;
+        if (error) throw error;
 
-        const namePart = username.replace(/[^a-zA-Z0-9]/g, '').substring(0, 5);
-        const ipUsername = `${namePart}_${newUser.id}`;
-
-        const { error: updateError } = await supabase
+        const ipUsername = `${username.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5)}_${newUser.id}`;
+        const { data: updatedUser, error: updateError } = await supabase
             .from('users')
             .update({ ip_username: ipUsername })
-            .eq('id', newUser.id);
+            .eq('id', newUser.id)
+            .select()
+            .single();
 
         if (updateError) throw updateError;
-        
-        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
-        res.status(201).json({ message: 'User registered successfully', token, user: { id: newUser.id, name: newUser.name, is_admin: newUser.is_admin } });
-    
+
+        const token = jwt.sign({ id: updatedUser.id, name: updatedUser.name, is_admin: updatedUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+        // ✅ PERFORMANCE FIX: Send the basic user object back along with the token.
+        // This allows the frontend to feel instantaneous.
+        res.status(201).json({ 
+            message: 'User registered successfully', 
+            token, 
+            user: { 
+                id: updatedUser.id, 
+                name: updatedUser.name, 
+                is_admin: updatedUser.is_admin,
+                ip_username: updatedUser.ip_username,
+                status: updatedUser.status
+            } 
+        });
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ error: 'Internal server error during registration.' });
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
