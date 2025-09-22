@@ -1002,7 +1002,7 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // });
 
 
-// ✅ TASK SYSTEM: New endpoint to get all tasks for a user
+// ✅ FIX: Added the /api/tasks endpoint
 app.get('/api/tasks', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase.rpc('get_user_tasks', { p_user_id: req.user.id });
@@ -1035,7 +1035,23 @@ app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to claim task reward.' });
     }
 });
-
+// ✅ FIX: Added the /api/suggestions endpoint
+app.post('/api/suggestions', authenticateToken, async (req, res) => {
+    const { suggestion_text } = req.body;
+    if (!suggestion_text || suggestion_text.trim() === '') {
+        return res.status(400).json({ error: 'Suggestion text cannot be empty.' });
+    }
+    try {
+        const { error } = await supabase.from('suggestions').insert([
+            { user_id: req.user.id, suggestion_text }
+        ]);
+        if (error) throw error;
+        res.status(201).json({ message: 'Suggestion submitted successfully.' });
+    } catch (error) {
+        console.error('Suggestion submission error:', error);
+        res.status(500).json({ error: 'Failed to submit suggestion.' });
+    }
+});
 
 // ✅ UPDATED: The /api/claim-income endpoint is now fully functional and will work with the new database function.
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
