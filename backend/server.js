@@ -833,7 +833,7 @@ cron.schedule('0 * * * *', () => {
 // ==========================================
 
 
-// This endpoint is for when a user first loads the game page.
+// This endpoint is ONLY for fetching the initial game history when the page loads.
 app.get('/api/game-state', authenticateToken, async (req, res) => {
     try {
         const { data: results } = await supabase.from('game_results')
@@ -846,7 +846,7 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
     }
 });
 
-// This endpoint is for the frontend to check a user's win/loss result.
+// This endpoint lets the frontend check a user's win/loss result for the popup.
 app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     const { period } = req.params;
     const userId = req.user.id;
@@ -892,8 +892,7 @@ async function processRoundResults(period) {
 
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
         if (betsError) throw betsError;
-
-        // 1. DETERMINE WINNING NUMBER
+        
         let winningNumber;
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
@@ -915,18 +914,15 @@ async function processRoundResults(period) {
             winningNumber = Math.floor(Math.random() * 10);
         }
         
-        // 2. SAVE THE RESULT TO DATABASE
         await supabase.from('game_results').insert({ game_period: period, result_number: winningNumber });
-        console.log(`[processRoundResults] Winning number for period ${period} is ${winningNumber}. Result saved.`);
+        console.log(`[processRoundResults] Winning number for period ${period} is ${winningNumber}.`);
 
-        // 3. ✅ CRITICAL FIX: BROADCAST THE RESULT TO ALL CLIENTS IMMEDIATELY
         const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
         broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
-        console.log(`[processRoundResults] ROUND_RESULT message has been broadcasted.`);
+        console.log(`[processRoundResults] ROUND_RESULT message broadcasted.`);
 
-        // 4. PROCESS PAYOUTS (This can now happen safely in the background)
         if (bets && bets.length > 0) {
-            console.log(`[processRoundResults] Processing payouts for ${bets.length} bets...`);
+            console.log(`[processRoundResults] Processing payouts...`);
             const winningColors = getNumberProperties(winningNumber);
             for (const bet of bets) {
                 let payout = 0;
@@ -941,17 +937,17 @@ async function processRoundResults(period) {
                 }
                 await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
             }
-            console.log(`[processRoundResults] Payouts finished for period ${period}.`);
+            console.log(`[processRoundResults] Payouts finished.`);
         }
-
     } catch (e) {
-        console.error(`[processRoundResults] ERROR processing period ${period}:`, e);
+        console.error(`[processRoundResults] ERROR for period ${period}:`, e);
     }
 }
 
 async function gameLoop() {
-    console.log("--- [gameLoop] Starting new game cycle... ---");
+    console.log("--- [gameLoop] Starting new cycle ---");
     if (gameTimer) clearInterval(gameTimer);
+
     try {
         const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').eq('id', 1).single();
         let previousPeriod;
@@ -970,7 +966,6 @@ async function gameLoop() {
         const nextPeriod = generatePeriodId();
         await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
         
-        console.log(`[gameLoop] New round starting for period: ${nextPeriod}`);
         let timeLeft = GAME_DURATION_SECONDS;
         gameTimer = setInterval(() => {
             const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
@@ -982,7 +977,7 @@ async function gameLoop() {
             }
         }, 1000);
     } catch (error) {
-        console.error("[gameLoop] CRITICAL error in main loop:", error);
+        console.error("[gameLoop] CRITICAL error:", error);
     }
 }
 
@@ -1938,61 +1933,31 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 const wss = new WebSocketServer({ server });
 
-
-
-// In server.js, find the block at the bottom of the file that starts with `wss.on('connection', ...)`
-// and replace the WHOLE block with this one.
-
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message.toString());
-
-            // Check if the incoming message is a bet for the color prediction game
             if (data.game === 'color-prediction' && data.action === 'bet') {
-                
                 const { amount, bet_on, token } = data.payload;
-
-                // 1. Authenticate the user from the token sent in the message
                 if (!token) return;
                 const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user || !user.id) return; // Invalid token or missing user ID
+                if (!user || !user.id) return;
 
-                // 2. Get the current game state to check if betting is still open
                 const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
                 const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
                 
                 if (timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
-                    
-                    // 3. Deduct the user's balance using your Supabase function
-                    const { error: betError } = await supabase.rpc('handle_bet_deduction', { 
-                        p_user_id: user.id, 
-                        p_amount: amount 
-                    });
-
+                    const { error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: user.id, p_amount: amount });
                     if (betError) {
-                        // Send an error message back to this specific client
                         ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Insufficient balance.' }));
                         return;
                     }
                     
-                    // 4. Save the successful bet to the database
-                    await supabase.from('bets').insert([{ 
-                        user_id: user.id, 
-                        game_period: gameState.current_period, 
-                        amount, 
-                        bet_on 
-                    }]);
-                    
-                    console.log(`Bet of ${amount} on ${bet_on} by user ${user.id} was successful for period ${gameState.current_period}.`);
-                    
-                    // 5. Send a success confirmation back to the client
+                    await supabase.from('bets').insert([{ user_id: user.id, game_period: gameState.current_period, amount, bet_on }]);
                     ws.send(JSON.stringify({ type: 'BET_SUCCESS', message: 'Bet placed!' }));
-
                 } else {
-                    // Send an error if the betting window is closed
                     ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
                 }
             }
@@ -2000,20 +1965,16 @@ wss.on('connection', ws => {
             console.error('Failed to process WebSocket message:', e);
         }
     });
-
-    ws.on('close', () => {
-        console.log('Client disconnected');
-    });
+    ws.on('close', () => console.log('Client disconnected'));
 });
 
-// Simple function to send data to ALL connected users
 function broadcast(data) {
     wss.clients.forEach(client => {
-        if (client.readyState === 1) { // 1 means OPEN
+        if (client.readyState === 1) {
             client.send(JSON.stringify(data));
         }
     });
 }
-// ✅ THIS IS THE CRITICAL LINE THAT WAS MISSING
-// Start the game loop for the first time
-gameLoop(); 
+
+// Start the game loop
+gameLoop();
