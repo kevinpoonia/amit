@@ -922,7 +922,45 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
     res.json({ ...gameState, time_left: timeLeft > 0 ? timeLeft : 0, can_bet: canBet, results });
 });
 
-// ✅ FIX: The two try...catch blocks have been merged to fix the syntax error.
+// src/backend/server.js
+
+// ✅ NEW: Endpoint to get the user's specific result for a completed game period
+app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
+    const { period } = req.params;
+    const userId = req.user.id;
+
+    if (!period) {
+        return res.status(400).json({ error: 'Game period is required.' });
+    }
+
+    try {
+        const { data: bets, error } = await supabase
+            .from('bets')
+            .select('payout')
+            .eq('user_id', userId)
+            .eq('game_period', period);
+
+        if (error) throw error;
+
+        // If the user didn't place any bets in this round
+        if (!bets || bets.length === 0) {
+            return res.json({ status: 'did_not_play' });
+        }
+
+        // Calculate total winnings for that round
+        const totalPayout = bets.reduce((sum, bet) => sum + (bet.payout || 0), 0);
+
+        if (totalPayout > 0) {
+            return res.json({ status: 'won', payout: totalPayout });
+        } else {
+            return res.json({ status: 'lost' });
+        }
+
+    } catch (err) {
+        console.error("Error fetching user's bet result:", err);
+        res.status(500).json({ error: "Failed to fetch your result for the round." });
+    }
+});
 // ✅ FIX: The two try...catch blocks have been merged to fix the syntax error.
 app.post('/api/bet', authenticateToken, async (req, res) => {
     try {
