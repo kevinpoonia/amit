@@ -232,6 +232,7 @@ app.post('/api/register', async (req, res) => {
             password,
             referred_by: referredById,
             balance: 50,
+             email: `${mobile}@moneyplus.com` // ✅ FIX: Added placeholder email
         }]).select().single();
 
         if (error) throw error;
