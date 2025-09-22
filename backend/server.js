@@ -902,12 +902,81 @@ async function runGameCycle() {
             countdown_start_time: new Date().toISOString(),
             next_result: null
         }).eq('id', 1);
-
+        
+// ✅ ADD THIS BROADCAST MESSAGE RIGHT AFTER THE DATABASE UPDATE:
+    // This tells all connected frontends that a new round has started and what the result of the last one was.
+    const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
+    broadcast({
+        type: 'NEW_ROUND_AND_RESULT',
+        results: results,
+        newPeriod: nextPeriod
+    });
+}  //till here
+    
     } catch (e) {
         console.error("Game Cycle Error:", e);
     }
 }
-setInterval(runGameCycle, GAME_DURATION_SECONDS * 1000);
+// server.js
+
+// REMOVE your entire setInterval(runGameCycle, ...) at the bottom.
+// DELETE the existing runGameCycle function.
+
+// ADD this new, improved game loop logic.
+
+let gameTimer;
+const GAME_DURATION = 60; // seconds
+
+async function gameLoop() {
+    console.log("Starting new game cycle...");
+    if (gameTimer) clearInterval(gameTimer);
+
+    // 1. Process the results of the PREVIOUS round first
+    // (This requires knowing the previous period, which we'll manage)
+    const { data: gs } = await supabase.from('game_state').select('current_period').single();
+    if (gs) {
+        await processRoundResults(gs.current_period); // We will create this function
+    }
+    
+    // 2. Start the NEW round
+    const newPeriod = generateNewPeriod(); // We will create this helper
+    await supabase.from('game_state').update({ current_period: newPeriod, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+
+    let timeLeft = GAME_DURATION;
+
+    gameTimer = setInterval(() => {
+        broadcast({ type: 'TIMER_UPDATE', timeLeft });
+        timeLeft--;
+
+        if (timeLeft < 0) {
+            clearInterval(gameTimer);
+            gameLoop(); // Start the next cycle
+        }
+    }, 1000);
+}
+
+async function processRoundResults(period) {
+    // MOVE all the logic from your OLD runGameCycle function here
+    // (calculating winner, paying users, inserting into game_results)
+    console.log(`Processing results for period ${period}...`);
+    // ... logic ...
+    
+    // After processing, send the final result to everyone
+    const { data: results } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
+    broadcast({ type: 'ROUND_RESULT', results });
+}
+
+function generateNewPeriod() {
+    const today = new Date();
+    const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+    const lastFour = String(Date.now()).slice(-4); // simple way to get a running number
+    return Number(yyyymmdd + lastFour);
+}
+
+// Start the game loop!
+gameLoop();
+
+
 
 app.get('/api/game-state', authenticateToken, async (req, res) => {
     const { data: gameState, error } = await supabase.from('game_state').select('*').single();
