@@ -18,19 +18,23 @@ console.log(`Attempting to start server on port: ${PORT}`);
 // Middleware
 // ✅ THIS IS THE FIX: A more robust CORS configuration
 const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000'];
+
+// ✅ THIS IS THE FIX: A more robust CORS configuration to handle preflight requests.
 const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  }
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests) and from whitelisted origins
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+    optionsSuccessStatus: 204,
 };
 
-app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
+app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://moneyplus.today'] }));
 app.use(express.json());
 
 // Initialize Supabase client
@@ -792,7 +796,6 @@ cron.schedule('0 * * * *', () => {
 });
 
 
-
 // ==========================================
 // ========== GAME LOGIC & ENDPOINTS ========
 // ==========================================
@@ -1076,7 +1079,6 @@ app.get('/api/lottery/live-stats/:roundId', authenticateToken, async (req, res) 
     } catch (e) { res.status(500).json({ error: 'Failed to get live stats.' }); }
 });
 
-// ✅ FIX: This endpoint is now corrected to avoid the 500 error.
 app.get('/api/lottery/history', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase.from('lottery_results')
