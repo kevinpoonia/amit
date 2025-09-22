@@ -864,35 +864,30 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
 // ========== NEW WEBSOCKET GAME LOOP ========
 // ==========================================
 
-/**
- * This function contains ALL your original logic for calculating a winner and paying them.
- * It's now separate from the timer.
- */
+// In server.js, replace the entire "NEW WEBSOCKET GAME LOOP" section with this block
+
+// ==========================================
+// ========== NEW WEBSOCKET GAME LOOP ========
+// ==========================================
 
 
 /**
- * This function contains ALL your original logic for calculating a winner and paying them.
+ * This function calculates and pays out winners for a completed round.
+ * It now runs in the background and broadcasts results when it's done.
  */
 async function processRoundResults(period) {
     console.log(`Processing results for period ${period}...`);
     try {
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
-        if (betsError) {
-            console.error("Error fetching bets for result processing:", betsError);
-            return;
-        }
+        if (betsError) throw betsError;
         if (!bets || bets.length === 0) {
             console.log(`No bets to process for period ${period}.`);
             return;
         }
 
-        const { data: gameState, error: gsError } = await supabase.from('game_state').select('*').single();
-        if (gsError) {
-            console.error("Error fetching game state for result processing:", gsError);
-            return;
-        }
+        const { data: gameState } = await supabase.from('game_state').select('*').single();
         
-        // 1. DETERMINE WINNING NUMBER (Your original logic is pasted here)
+        // 1. DETERMINE WINNING NUMBER (Your logic)
         let winningNumber;
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
@@ -911,12 +906,11 @@ async function processRoundResults(period) {
             const lowestPayoutNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
             winningNumber = lowestPayoutNumbers[Math.floor(Math.random() * lowestPayoutNumbers.length)];
         }
-
-        console.log(`Winning number for period ${period} is ${winningNumber}`);
-        const winningColors = getNumberProperties(winningNumber);
+        
         await supabase.from('game_results').insert({ game_period: period, result_number: winningNumber });
 
         // 2. PAY THE WINNERS
+        const winningColors = getNumberProperties(winningNumber);
         for (const bet of bets) {
             let payout = 0;
             let status = 'lost';
@@ -930,10 +924,11 @@ async function processRoundResults(period) {
             }
             await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
         }
-
+        
         // 3. BROADCAST THE FINAL RESULTS TO ALL PLAYERS
         const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
         broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
+        console.log(`Finished processing results for period ${period}. Winning number: ${winningNumber}`);
 
     } catch (e) {
         console.error(`Error processing results for period ${period}:`, e);
@@ -946,47 +941,36 @@ async function processRoundResults(period) {
 async function gameLoop() {
     if (gameTimer) clearInterval(gameTimer);
 
-    // Get the current state from the database
-    const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').single();
-    if (gsError) {
-        console.error("CRITICAL: Could not start game loop. Failed to fetch game state:", gsError);
-        return; // Stop the loop if we can't get the state
-    }
+    // 1. Get the period that JUST ended.
+    const { data: gs } = await supabase.from('game_state').select('current_period').single();
+    const previousPeriod = gs.current_period;
 
-    // Process results for the round that just "finished"
-    await processRoundResults(gs.current_period);
-    
-    // Start the new round's countdown
+    // 2. Immediately calculate the NEXT period and update the database.
     const today = new Date();
     const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const lastPeriodStr = gs.current_period.toString();
-    const lastDatePart = lastPeriodStr.substring(0, 8);
-    let nextPeriod;
-    if (lastDatePart === yyyymmdd) {
-        nextPeriod = Number(gs.current_period) + 1;
-    } else {
-        nextPeriod = Number(yyyymmdd + "0001");
-    }
+    const lastDatePart = previousPeriod.toString().substring(0, 8);
+    let nextPeriod = (lastDatePart === yyyymmdd) 
+        ? Number(previousPeriod) + 1 
+        : Number(yyyymmdd + "0001");
     
     await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
-    console.log(`Starting new round: ${nextPeriod}`);
+    console.log(`Starting new round timer for: ${nextPeriod}`);
 
+    // 3. Start the timer broadcast IMMEDIATELY. This is the fix.
     let timeLeft = GAME_DURATION_SECONDS;
     gameTimer = setInterval(() => {
         const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
-        
-        // This is the message your frontend is waiting for!
         broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
-        
         timeLeft--;
-
         if (timeLeft < 0) {
             clearInterval(gameTimer);
             gameLoop(); // Start the next cycle
         }
     }, 1000);
-}
 
+    // 4. Process the PREVIOUS round's results in the background (no `await`).
+    processRoundResults(previousPeriod);
+}
 
 
 app.get('/api/game-state', authenticateToken, async (req, res) => {
