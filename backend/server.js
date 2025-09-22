@@ -205,7 +205,6 @@ app.post('/api/register', async (req, res) => {
         return res.status(400).json({ error: 'Username, mobile, and password are required' });
     }
     try {
-        // ✅ FIX: Check if a user with this mobile number already exists.
         const { data: existingUser, error: existingUserError } = await supabase
             .from('users')
             .select('id')
@@ -215,7 +214,6 @@ app.post('/api/register', async (req, res) => {
         if (existingUser) {
             return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
-        // Supabase returns an error if no row is found, which is expected. We only throw for other errors.
         if (existingUserError && existingUserError.code !== 'PGRST116') {
             throw existingUserError;
         }
@@ -231,20 +229,18 @@ app.post('/api/register', async (req, res) => {
         const { data: newUser, error } = await supabase.from('users').insert([{
             name: username,
             mobile,
-            password, // Note: In production, hash passwords
+            password,
             referred_by: referredById,
             balance: 50,
         }]).select().single();
 
         if (error) throw error;
         
-        // Generate and update the unique IP username
         const ipUsername = `${username.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5)}_${newUser.id}`;
         await supabase.from('users').update({ ip_username: ipUsername }).eq('id', newUser.id);
 
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         
-        // ✅ TASK SYSTEM: Update referrer's progress if applicable
         if (referredById) {
             await supabase.rpc('increment_task_progress', {
                 p_user_id: referredById,
@@ -283,19 +279,13 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// ✅ RESTORED: All necessary endpoints for the app to function after login.
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
-        const { data: user, error } = await supabase
-            .from('users')
-            // Added 'is_admin' to the list of columns to fetch
-            .select('id, name, ip_username, status, avatar_url, is_admin') 
-            .eq('id', req.user.id)
-            .single();
-            
+        const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url, is_admin').eq('id', req.user.id).single();
         if (error) throw error;
         res.json({ user });
     } catch (error) {
-        console.error("Failed to fetch user data:", error);
         res.status(500).json({ error: 'Failed to fetch user data' });
     }
 });
