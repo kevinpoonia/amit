@@ -384,44 +384,61 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
 
 // ✅ THIS IS THE CORRECTED AND COMPLETE ENDPOINT
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
+    console.log("\n--- Received Purchase Request ---");
     try {
-        const { data: user, error: userError } = await supabase.from('users').select('status').eq('id', req.user.id).single();
-        if (userError) throw userError;
-        if (['flagged', 'non-active'].includes(user.status)) {
+        const { id, price, name, durationDays } = req.body;
+        console.log("Payload received:", { id, price, name });
+        console.log(`Attempting purchase for user ID: ${req.user.id}`);
+
+        // Fetch the user's current balances directly from the DB for logging
+        const { data: currentUser, error: userFetchError } = await supabase
+            .from('users')
+            .select('balance, withdrawable_wallet, status')
+            .eq('id', req.user.id)
+            .single();
+
+        if (userFetchError) throw userFetchError;
+
+        const dbBalance = Number(currentUser.balance) || 0;
+        const dbWithdrawable = Number(currentUser.withdrawable_wallet) || 0;
+        const dbTotal = dbBalance + dbWithdrawable;
+        
+        console.log(`Database Balance: ${dbBalance}, Withdrawable: ${dbWithdrawable}, Total: ${dbTotal}`);
+        console.log(`Comparing DB Total (${dbTotal}) with Plan Price (${price})`);
+
+        if (['flagged', 'non-active'].includes(currentUser.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
 
-        const { id, price, name, durationDays } = req.body;
-
-        // Call the new database function to securely handle the balance deduction
+        // Call the database function
         const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { 
             p_user_id: req.user.id, 
             p_amount: price 
         });
 
         if (rpcError || !deductionSuccess) {
+            console.error("Deduction failed. RPC Error:", rpcError);
+            console.log("Result from DB function (deductionSuccess):", deductionSuccess);
             return res.status(400).json({ error: 'Insufficient total balance.' });
         }
 
-        // Only if deduction is successful, insert the investment record
         const { error: investmentError } = await supabase.from('investments').insert([
             { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }
         ]);
 
         if (investmentError) {
-            // Important: If this step fails, we should ideally refund the user.
-            // For now, we log the error and inform the user.
-            console.error("CRITICAL: Failed to record investment after purchase for user:", req.user.id);
+            console.error("CRITICAL: Failed to record investment after purchase for user:", req.user.id, investmentError);
+            // Ideally, you would refund the user here.
             return res.status(500).json({ error: 'Purchase failed after payment. Please contact support immediately.' });
         }
         
+        console.log("--- Purchase Successful ---");
         res.json({ message: 'Plan purchased successfully!' });
     } catch (error) { 
         console.error("Purchase Plan Error:", error);
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); 
     }
 });
-
 // ✅ UPDATED: This endpoint has been corrected to fix the SyntaxError.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
