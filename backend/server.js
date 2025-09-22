@@ -882,24 +882,22 @@ const BETTING_WINDOW_SECONDS = 50;
 
 // In server.js
 
+// In server.js, replace the entire processRoundResults function with this:
+
 async function processRoundResults(period) {
-    // ✅ ADDED: Log to confirm the function starts
     console.log(`[processRoundResults] Starting for period: ${period}`);
-    
     try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('*').single();
+        if (gsError) throw gsError;
+
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
         if (betsError) throw betsError;
-        if (!bets || bets.length === 0) {
-            console.log(`[processRoundResults] No bets to process for period ${period}.`);
-            return;
-        }
 
-        const { data: gameState } = await supabase.from('game_state').select('*').single();
-        
+        // 1. DETERMINE WINNING NUMBER
         let winningNumber;
         if (gameState.mode === 'admin' && gameState.next_result !== null) {
             winningNumber = gameState.next_result;
-        } else {
+        } else if (bets && bets.length > 0) {
             const totalPayouts = Array(10).fill(0);
             bets.forEach(bet => {
                 for (let i = 0; i < 10; i++) {
@@ -913,39 +911,40 @@ async function processRoundResults(period) {
             const minPayout = Math.min(...totalPayouts);
             const lowestPayoutNumbers = totalPayouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
             winningNumber = lowestPayoutNumbers.length > 0 ? lowestPayoutNumbers[Math.floor(Math.random() * lowestPayoutNumbers.length)] : Math.floor(Math.random() * 10);
+        } else {
+            winningNumber = Math.floor(Math.random() * 10);
         }
         
+        // 2. SAVE THE RESULT TO DATABASE
         await supabase.from('game_results').insert({ game_period: period, result_number: winningNumber });
+        console.log(`[processRoundResults] Winning number for period ${period} is ${winningNumber}. Result saved.`);
 
-        const winningColors = getNumberProperties(winningNumber);
-        for (const bet of bets) {
-            let payout = 0;
-            let status = 'lost';
-            if (bet.bet_on == winningNumber.toString() || winningColors.includes(bet.bet_on)) {
-                status = 'won';
-                if (bet.bet_on == winningNumber.toString()) payout += parseFloat(bet.amount) * 9.2;
-                if (winningColors.includes(bet.bet_on)) payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
+        // 3. ✅ CRITICAL FIX: BROADCAST THE RESULT TO ALL CLIENTS IMMEDIATELY
+        const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
+        broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
+        console.log(`[processRoundResults] ROUND_RESULT message has been broadcasted.`);
+
+        // 4. PROCESS PAYOUTS (This can now happen safely in the background)
+        if (bets && bets.length > 0) {
+            console.log(`[processRoundResults] Processing payouts for ${bets.length} bets...`);
+            const winningColors = getNumberProperties(winningNumber);
+            for (const bet of bets) {
+                let payout = 0;
+                let status = 'lost';
+                if (bet.bet_on == winningNumber.toString() || winningColors.includes(bet.bet_on)) {
+                    status = 'won';
+                    if (bet.bet_on == winningNumber.toString()) payout += parseFloat(bet.amount) * 9.2;
+                    if (winningColors.includes(bet.bet_on)) payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
+                }
+                if (payout > 0) {
+                    await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+                }
+                await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
             }
-            if (payout > 0) {
-                await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
-            }
-            await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
+            console.log(`[processRoundResults] Payouts finished for period ${period}.`);
         }
-        
-       // This is inside processRoundResults()
-const { data: updatedResults } = await supabase
-    .from('game_results') // It correctly reads from the main results table
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(20);
-
-broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
-        
-        // ✅ ADDED: Log to confirm the function finished and broadcasted
-        console.log(`[processRoundResults] SUCCESS for period ${period}. Result broadcast sent.`);
 
     } catch (e) {
-        // ✅ ADDED: Log to catch any errors during processing
         console.error(`[processRoundResults] ERROR processing period ${period}:`, e);
     }
 }
