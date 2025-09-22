@@ -245,6 +245,14 @@ app.post('/api/register', async (req, res) => {
 
         const token = jwt.sign({ id: updatedUser.id, name: updatedUser.name, is_admin: updatedUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
+// ✅ TASK SYSTEM: Update referrer's progress if applicable
+        if (referredById) {
+            await supabase.rpc('increment_task_progress', {
+                p_user_id: referredById,
+                p_task_type: 'referral',
+                p_increment_value: 1
+            });
+        }
         // ✅ PERFORMANCE FIX: Send the basic user object back along with the token.
         // This allows the frontend to feel instantaneous.
         res.status(201).json({ 
@@ -489,6 +497,13 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }
         ]);
 
+// ✅ TASK SYSTEM: Update investment task progress
+        await supabase.rpc('increment_task_progress', {
+            p_user_id: req.user.id,
+            p_task_type: 'investment',
+            p_increment_value: price
+        });
+        
         if (investmentError) {
             console.error("CRITICAL: Failed to record investment after purchase for user:", req.user.id, investmentError);
             // Ideally, you would refund the user here.
@@ -955,7 +970,12 @@ app.post('/api/bet', authenticateToken, async (req, res) => {
 
         const { error: insertError } = await supabase.from('bets').insert([{ user_id: req.user.id, game_period: gameState.current_period, amount, bet_on }]);
         if (insertError) throw insertError;
-
+ // ✅ TASK SYSTEM: Update betting task progress
+        await supabase.rpc('increment_task_progress', {
+            p_user_id: req.user.id,
+            p_task_type: 'betting',
+            p_increment_value: amount
+        });
         res.json({ message: 'Bet placed successfully.' });
     } catch (error) {
         console.error("Bet placement error:", error);
@@ -1003,6 +1023,39 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // });
 
 
+// ✅ TASK SYSTEM: New endpoint to get all tasks for a user
+app.get('/api/tasks', authenticateToken, async (req, res) => {
+    try {
+        const { data, error } = await supabase.rpc('get_user_tasks', { p_user_id: req.user.id });
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error("Error fetching tasks:", error);
+        res.status(500).json({ error: 'Failed to fetch tasks.' });
+    }
+});
+
+// ✅ TASK SYSTEM: New endpoint to claim a task reward
+app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
+    const { taskId } = req.body;
+    try {
+        const { data, error } = await supabase.rpc('claim_task_reward', {
+            p_user_id: req.user.id,
+            p_task_id: taskId
+        });
+
+        if (error) throw error;
+
+        if (data.success) {
+            res.json({ message: data.message });
+        } else {
+            res.status(400).json({ error: data.message });
+        }
+    } catch (error) {
+        console.error("Error claiming task:", error);
+        res.status(500).json({ error: 'Failed to claim task reward.' });
+    }
+});
 
 
 // ✅ UPDATED: The /api/claim-income endpoint is now fully functional and will work with the new database function.
@@ -1193,7 +1246,12 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date() }).eq('id', id);
-        
+        // ✅ TASK SYSTEM: Update deposit task progress
+        await supabase.rpc('increment_task_progress', {
+            p_user_id: recharge.user_id,
+            p_task_type: 'deposit',
+            p_increment_value: recharge.amount
+        });
         const { error: referralError } = await supabase.rpc('handle_deposit_referral', {
             depositing_user_id: recharge.user_id, deposit_id: recharge.id, deposit_amount: recharge.amount
         });
