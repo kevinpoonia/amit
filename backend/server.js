@@ -173,6 +173,26 @@ function getLotteryRoundId() {
     return `${year}${month}${day}-${hour}`;
 };
 
+function generatePeriodId() {
+    const now = new Date();
+    
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const yyyymmdd = `${year}${month}${day}`;
+
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    // Calculate the total minutes passed since the start of the day
+    const minuteOfDay = (hours * 60) + minutes + 1; // Ranges from 1 to 1440
+    
+    // Pad the minute with leading zeros to ensure it's always 4 digits
+    const minutePart = String(minuteOfDay).padStart(4, '0');
+
+    return Number(`${yyyymmdd}${minutePart}`);
+}
+
+
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
@@ -968,34 +988,24 @@ async function gameLoop() {
         // 2. Process the PREVIOUS round's results in the background (no `await`).
         processRoundResults(previousPeriod);
 
-        // 3. Immediately calculate the NEXT period.
-        const today = new Date();
-        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-        const lastDatePart = previousPeriod.toString().substring(0, 8);
-        let nextPeriod = (lastDatePart === yyyymmdd) 
-            ? Number(previousPeriod) + 1 
-            : Number(yyyymmdd + "0001");
-        
-        await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
-        console.log(`[gameLoop] New round timer starting for period: ${nextPeriod}`);
+        // ✅ CHANGED: Use the new, simpler function to get the current period ID.
+    const nextPeriod = generatePeriodId();
+    
+    await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+    console.log(`Starting new round timer for period: ${nextPeriod}`);
 
-        // 4. Start the timer broadcast IMMEDIATELY.
-        let timeLeft = GAME_DURATION_SECONDS;
-        gameTimer = setInterval(() => {
-            const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
-            
-            // This is the message that will unfreeze your frontend.
-            broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
-            console.log(`[gameLoop] Broadcasting timeLeft: ${timeLeft}`); // LOG FOR DEBUGGING
-
-            timeLeft--;
-            if (timeLeft < 0) {
-                clearInterval(gameTimer);
-                gameLoop(); // Start the next cycle
-            }
-        }, 1000);
-
-    } catch (error) {
+    let timeLeft = GAME_DURATION_SECONDS;
+    gameTimer = setInterval(() => {
+        const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
+        broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
+        timeLeft--;
+        if (timeLeft < 0) {
+            clearInterval(gameTimer);
+            gameLoop();
+        }
+    }, 1000);
+}
+    catch (error) {
         console.error("[gameLoop] A critical error occurred in the main loop:", error);
     }
 }
