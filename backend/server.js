@@ -939,39 +939,66 @@ async function processRoundResults(period) {
  * This function ONLY manages the timer and the flow of the game.
  */
 async function gameLoop() {
+    console.log("--- [gameLoop] Starting new game cycle... ---");
     if (gameTimer) clearInterval(gameTimer);
 
-    // 1. Get the period that JUST ended.
-    const { data: gs } = await supabase.from('game_state').select('current_period').single();
-    const previousPeriod = gs.current_period;
+    try {
+        // 1. Get the current period from the database.
+        const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').eq('id', 1).single();
 
-    // 2. Immediately calculate the NEXT period and update the database.
-    const today = new Date();
-    const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-    const lastDatePart = previousPeriod.toString().substring(0, 8);
-    let nextPeriod = (lastDatePart === yyyymmdd) 
-        ? Number(previousPeriod) + 1 
-        : Number(yyyymmdd + "0001");
-    
-    await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
-    console.log(`Starting new round timer for: ${nextPeriod}`);
+        let previousPeriod;
 
-    // 3. Start the timer broadcast IMMEDIATELY. This is the fix.
-    let timeLeft = GAME_DURATION_SECONDS;
-    gameTimer = setInterval(() => {
-        const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
-        broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
-        timeLeft--;
-        if (timeLeft < 0) {
-            clearInterval(gameTimer);
-            gameLoop(); // Start the next cycle
+        if (gsError || !gs) {
+            console.error("[gameLoop] Could not find game state (or table is empty). Attempting to initialize...");
+            const initialPeriod = Number(new Date().toISOString().slice(0, 10).replace(/-/g, "") + "0001");
+            const { error: insertError } = await supabase.from('game_state').upsert({ id: 1, current_period: initialPeriod });
+
+            if (insertError) {
+                console.error("[gameLoop] CRITICAL: Failed to create initial game state. Halting loop.", insertError);
+                return; // Stop everything if we can't even create the initial state.
+            }
+            previousPeriod = initialPeriod;
+            console.log(`[gameLoop] Successfully initialized game state with period: ${previousPeriod}`);
+        } else {
+            previousPeriod = gs.current_period;
         }
-    }, 1000);
 
-    // 4. Process the PREVIOUS round's results in the background (no `await`).
-    processRoundResults(previousPeriod);
+        console.log(`[gameLoop] Previous period to process is: ${previousPeriod}`);
+        
+        // 2. Process the PREVIOUS round's results in the background (no `await`).
+        processRoundResults(previousPeriod);
+
+        // 3. Immediately calculate the NEXT period.
+        const today = new Date();
+        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+        const lastDatePart = previousPeriod.toString().substring(0, 8);
+        let nextPeriod = (lastDatePart === yyyymmdd) 
+            ? Number(previousPeriod) + 1 
+            : Number(yyyymmdd + "0001");
+        
+        await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
+        console.log(`[gameLoop] New round timer starting for period: ${nextPeriod}`);
+
+        // 4. Start the timer broadcast IMMEDIATELY.
+        let timeLeft = GAME_DURATION_SECONDS;
+        gameTimer = setInterval(() => {
+            const canBet = timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS);
+            
+            // This is the message that will unfreeze your frontend.
+            broadcast({ type: 'TIMER_UPDATE', timeLeft, current_period: nextPeriod, can_bet: canBet });
+            console.log(`[gameLoop] Broadcasting timeLeft: ${timeLeft}`); // LOG FOR DEBUGGING
+
+            timeLeft--;
+            if (timeLeft < 0) {
+                clearInterval(gameTimer);
+                gameLoop(); // Start the next cycle
+            }
+        }, 1000);
+
+    } catch (error) {
+        console.error("[gameLoop] A critical error occurred in the main loop:", error);
+    }
 }
-
 
 app.get('/api/game-state', authenticateToken, async (req, res) => {
     try {
