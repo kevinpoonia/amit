@@ -204,19 +204,25 @@ app.post('/api/register', async (req, res) => {
     if (!username || !mobile || !password) {
         return res.status(400).json({ error: 'Username, mobile, and password are required' });
     }
-    if (!/^\d{10}$/.test(mobile)) {
-        return res.status(400).json({ error: 'Mobile number must be 10 digits' });
-    }
-
     try {
-        const { data: existingUsers } = await supabase.from('users').select('id').eq('mobile', mobile);
-        if (existingUsers && existingUsers.length > 0) {
-            return res.status(400).json({ error: 'User already exists with this mobile number' });
+        // ✅ FIX: Check if a user with this mobile number already exists.
+        const { data: existingUser, error: existingUserError } = await supabase
+            .from('users')
+            .select('id')
+            .eq('mobile', mobile)
+            .single();
+
+        if (existingUser) {
+            return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
-        
+        // Supabase returns an error if no row is found, which is expected. We only throw for other errors.
+        if (existingUserError && existingUserError.code !== 'PGRST116') {
+            throw existingUserError;
+        }
+
         let referredById = null;
-        if (referralCode && referralCode.trim() !== '') {
-            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode.trim()).single();
+        if (referralCode) {
+            const { data: referrer } = await supabase.from('users').select('id').eq('ip_username', referralCode).single();
             if (referrer) {
                 referredById = referrer.id;
             }
@@ -224,28 +230,21 @@ app.post('/api/register', async (req, res) => {
 
         const { data: newUser, error } = await supabase.from('users').insert([{
             name: username,
-            email: `${mobile}@moneyplus.com`,
-            password,
             mobile,
-            balance: 50,
+            password, // Note: In production, hash passwords
             referred_by: referredById,
+            balance: 50,
         }]).select().single();
 
         if (error) throw error;
-
+        
+        // Generate and update the unique IP username
         const ipUsername = `${username.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5)}_${newUser.id}`;
-        const { data: updatedUser, error: updateError } = await supabase
-            .from('users')
-            .update({ ip_username: ipUsername })
-            .eq('id', newUser.id)
-            .select()
-            .single();
+        await supabase.from('users').update({ ip_username: ipUsername }).eq('id', newUser.id);
 
-        if (updateError) throw updateError;
-
-        const token = jwt.sign({ id: updatedUser.id, name: updatedUser.name, is_admin: updatedUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
-
-// ✅ TASK SYSTEM: Update referrer's progress if applicable
+        const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
+        
+        // ✅ TASK SYSTEM: Update referrer's progress if applicable
         if (referredById) {
             await supabase.rpc('increment_task_progress', {
                 p_user_id: referredById,
@@ -253,19 +252,8 @@ app.post('/api/register', async (req, res) => {
                 p_increment_value: 1
             });
         }
-        // ✅ PERFORMANCE FIX: Send the basic user object back along with the token.
-        // This allows the frontend to feel instantaneous.
-        res.status(201).json({ 
-            message: 'User registered successfully', 
-            token, 
-            user: { 
-                id: updatedUser.id, 
-                name: updatedUser.name, 
-                is_admin: updatedUser.is_admin,
-                ip_username: updatedUser.ip_username,
-                status: updatedUser.status
-            } 
-        });
+        
+        res.status(201).json({ message: 'User registered successfully', token, user: { ...newUser, ip_username: ipUsername } });
     } catch (error) {
         console.error('Registration error:', error);
         res.status(500).json({ error: 'Internal server error' });
