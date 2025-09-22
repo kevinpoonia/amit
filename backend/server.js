@@ -868,9 +868,7 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
  * This function contains ALL your original logic for calculating a winner and paying them.
  * It's now separate from the timer.
  */
-let gameTimer;
-const GAME_DURATION_SECONDS = 60;
-const BETTING_WINDOW_SECONDS = 50;
+
 
 /**
  * This function contains ALL your original logic for calculating a winner and paying them.
