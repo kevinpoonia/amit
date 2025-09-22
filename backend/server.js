@@ -157,6 +157,30 @@ const getNumberProperties = (num) => {
 // ==========================================
 // ========== USER-FACING API ENDPOINTS =====
 // ==========================================
+
+
+// ✅ **NEW ENDPOINT ADDED HERE** ✅
+// This endpoint receives a suggestion from a logged-in user and saves it to the database.
+app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
+    const { suggestion } = req.body;
+    if (!suggestion || suggestion.trim() === '') {
+        return res.status(400).json({ error: 'Suggestion text cannot be empty.' });
+    }
+    try {
+        const { error } = await supabase.from('suggestions').insert([
+            { 
+                user_id: req.user.id, // Storing which user made the suggestion
+                suggestion_text: suggestion.trim() 
+            }
+        ]);
+        if (error) throw error;
+        res.status(201).json({ message: 'Suggestion submitted successfully!' });
+    } catch (error) {
+        console.error("Error submitting suggestion:", error);
+        res.status(500).json({ error: 'Failed to submit suggestion.' });
+    }
+});
+
 // ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
