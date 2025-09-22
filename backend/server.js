@@ -950,15 +950,7 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 // });
 
 
-// ✅ UPDATED: This endpoint now correctly joins with product_plans to get daily_income
-app.get('/api/investments', authenticateToken, async (req, res) => {
-    try {
-        const { data, error } = await supabase.from('investments').select(`id, plan_name, amount, status, days_left, created_at, product_plans(daily_income)`).eq('user_id', req.user.id).order('created_at', { ascending: false });
-        if (error) throw error;
-        const formattedData = data.map(inv => ({ ...inv, daily_income: inv.product_plans ? inv.product_plans.daily_income : 0 }));
-        res.json({ investments: formattedData });
-    } catch (error) { res.status(500).json({ error: 'Failed to fetch user investments.' }); }
-});
+
 
 // ✅ UPDATED: The /api/claim-income endpoint is now fully functional and will work with the new database function.
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
