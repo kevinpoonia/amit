@@ -2169,15 +2169,17 @@ server.listen(PORT, '0.0.0.0', () => {
 // ✅ NEW: Create a WebSocket server that does not bind to a port on its own
 const wss = new WebSocketServer({ noServer: true });
 
-// ✅ CORRECTED: WebSocket connection handler for both games
+// ... (Your server start and wss declaration are correct)
+
+// ✅ CORRECTED: WebSocket connection handler with consolidated try/catch block
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
 
     ws.on('message', async (message) => {
         try {
-            const data = JSON.parse(message.toString()); // ✅ FIX: 'data' variable is now correctly defined here
+            const data = JSON.parse(message.toString());
 
-
+            // --- Consolidated game logic within the single try block ---
             if (data.game === 'color-prediction' && data.action === 'bet') {
                 const { amount, bet_on, token } = data.payload;
                 if (!token) return;
@@ -2200,16 +2202,13 @@ wss.on('connection', ws => {
                     ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
                 }
             }
-        } catch (e) {
-            console.error('Failed to process WebSocket message:', e);
-        }
 
-// --- Your Pushpa Game Logic ---
+            // --- Your Pushpa Game Logic, moved inside the try block ---
             if (data.game === 'pushpa') {
                 const { token } = data.payload;
                 if (!token) return;
                 const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user && !user.id) return; // A slightly more robust check
+                if (!user && !user.id) return;
 
                 if (data.action === 'bet') {
                     if (pushpaGameState.status !== 'waiting') {
@@ -2251,6 +2250,7 @@ wss.on('connection', ws => {
             }
 
         } catch (e) {
+            // ✅ All errors from both game logics are now caught here
             console.error('Failed to process WebSocket message:', e);
         }
     });
