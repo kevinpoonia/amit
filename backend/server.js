@@ -2258,14 +2258,6 @@ wss.on('connection', ws => {
     ws.on('close', () => console.log('Client disconnected'));
 });
 
-// ✅ CORRECTED: The broadcast function is correct but should be placed after wss is defined.
-function broadcast(data) {
-    wss.clients.forEach(client => {
-        if (client.readyState === 1) { // 1 means OPEN
-            client.send(JSON.stringify(data));
-        }
-    });
-}
 
 // Start the game loop
 gameLoop();
