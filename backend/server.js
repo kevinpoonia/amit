@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
 
-const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000','https://www.moneyplus.today/', 'https://moneyplus.today'];
+const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'];
 
 const corsOptions = {
     origin: (origin, callback) => {
@@ -32,10 +32,12 @@ const corsOptions = {
     optionsSuccessStatus: 204,
 };
 
-app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
-app.use(express.json());
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'] }));
+app.use(express.json());
+
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
 
