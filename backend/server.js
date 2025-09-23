@@ -652,7 +652,7 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
 //======= Pushpa game api===================
 //==========================================
 // ✅ ADD THIS NEW PUSHPA RAJ API ROUTE
-app.post('/api/pushpa-raj/place-bet', verifyToken, async (req, res) => {
+app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
     const { betAmount } = req.body;
     const userId = req.user.id; // User ID from the JWT token
 
