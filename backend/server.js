@@ -3,33 +3,25 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { createClient } = require('@supabase/supabase-js');
-const cron = require('node-cron'); // ✅ FIX: This line was missing
-const multer = require('multer'); // Import multer
-// At the top with other imports
+const cron = require('node-cron');
+const multer = require('multer');
 const { WebSocketServer } = require('ws');
-const http = require('http'); // For creating a shared HTTP server
+const http = require('http');
 
-// Load environment variables
 dotenv.config();
 
-// Initialize Express app
 const app = express();
-// ✅ NEW: Create a standard HTTP server that both Express and WebSocket can use
 const server = http.createServer(app);
 
 const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
 
-// Middleware
-// ✅ THIS IS THE FIX: A more robust CORS configuration
 const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000'];
 
-// ✅ THIS IS THE FIX: A more robust CORS configuration to handle preflight requests.
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl requests) and from whitelisted origins
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
             callback(new Error('Not allowed by CORS'));
@@ -43,13 +35,10 @@ const corsOptions = {
 app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000'] }));
 app.use(express.json());
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Enable pre-flight for all routes
+app.options('*', cors(corsOptions));
 
-// Initialize Supabase client
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
 
-
-// ✅ NEW: Added the missing currency formatter function to the server.
 const formatCurrency = (amount) => {
     if (typeof amount !== 'number') amount = 0;
     return new Intl.NumberFormat("en-IN", {
@@ -59,14 +48,9 @@ const formatCurrency = (amount) => {
     }).format(amount);
 };
 
-// ==========================================
-// ========== Daily Cron Job ================
-// ==========================================
-// This job runs once every day at midnight server time.
 cron.schedule('0 0 * * *', async () => {
     console.log('Running daily cron job: Updating investments and distributing income...');
     try {
-        // 1. Fetch all active investments
         const { data: activeInvestments, error: fetchError } = await supabase
             .from('investments')
             .select('id, days_left, user_id, plan_id')
@@ -74,18 +58,14 @@ cron.schedule('0 0 * * *', async () => {
 
         if (fetchError) throw fetchError;
 
-        const incomeDistribution = {}; // { userId: totalDailyIncome }
-
+        const incomeDistribution = {};
         for (const investment of activeInvestments) {
             const newDaysLeft = investment.days_left - 1;
             const newStatus = newDaysLeft <= 0 ? 'completed' : 'active';
-
             await supabase
                 .from('investments')
                 .update({ days_left: newDaysLeft, status: newStatus })
                 .eq('id', investment.id);
-
-            // If the investment is still active, add its income for distribution
             if (newStatus === 'active') {
                 const { data: plan, error: planError } = await supabase
                     .from('product_plans')
@@ -98,16 +78,12 @@ cron.schedule('0 0 * * *', async () => {
                 }
             }
         }
-
-        // 2. Distribute income to users' unclaimed balance
         for (const userId in incomeDistribution) {
             await supabase.rpc('increment_unclaimed_income', {
                 p_user_id: parseInt(userId),
                 p_amount: incomeDistribution[userId]
             });
         }
-        
-        // ✅ FIX: Changed table name from 'daily_tasks' to 'daily_profits'
         await supabase.from('daily_profits').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
         console.log('Daily cron job completed successfully.');
     } catch (error) {
@@ -115,9 +91,6 @@ cron.schedule('0 0 * * *', async () => {
     }
 });
 
-// ==========================================
-// ========== AUTHENTICATION MIDDLEWARE =====
-// ==========================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -146,9 +119,6 @@ const authenticateAdmin = async (req, res, next) => {
     }
 };
 
-// ==========================================
-// ============== HELPER FUNCTIONS ==========
-// ==========================================
 const generateIpUsername = (username) => {
     let namePart = username.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6);
     if (namePart.length < 6) namePart = namePart.padEnd(6, '123');
@@ -166,8 +136,6 @@ const getNumberProperties = (num) => {
     return colors;
 };
 
-// ✅ FIX: Changed to a function declaration to ensure it's hoisted and available everywhere.
-
 function getLotteryRoundId() {
     const now = new Date();
     const year = now.getFullYear();
@@ -179,31 +147,17 @@ function getLotteryRoundId() {
 
 function generatePeriodId() {
     const now = new Date();
-    
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const yyyymmdd = `${year}${month}${day}`;
-
     const hours = now.getHours();
     const minutes = now.getMinutes();
-    // Calculate the total minutes passed since the start of the day
-    const minuteOfDay = (hours * 60) + minutes + 1; // Ranges from 1 to 1440
-    
-    // Pad the minute with leading zeros to ensure it's always 4 digits
+    const minuteOfDay = (hours * 60) + minutes + 1;
     const minutePart = String(minuteOfDay).padStart(4, '0');
-
     return Number(`${yyyymmdd}${minutePart}`);
 }
 
-
-// ==========================================
-// ========== USER-FACING API ENDPOINTS =====
-// ==========================================
-
-
-// ✅ **NEW ENDPOINT ADDED HERE** ✅
-// This endpoint receives a suggestion from a logged-in user and saves it to the database.
 app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
     const { suggestion } = req.body;
     if (!suggestion || suggestion.trim() === '') {
@@ -212,7 +166,7 @@ app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase.from('suggestions').insert([
             { 
-                user_id: req.user.id, // Storing which user made the suggestion
+                user_id: req.user.id,
                 suggestion_text: suggestion.trim() 
             }
         ]);
@@ -224,7 +178,6 @@ app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: The /api/register endpoint has been completely rewritten for reliability and error handling.
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
     if (!username || !mobile || !password) {
@@ -258,7 +211,7 @@ app.post('/api/register', async (req, res) => {
             password,
             referred_by: referredById,
             balance: 50,
-             email: `${mobile}@moneyplus.com` // ✅ FIX: Added placeholder email
+            email: `${mobile}@moneyplus.com`
         }]).select().single();
 
         if (error) throw error;
@@ -284,7 +237,6 @@ app.post('/api/register', async (req, res) => {
 });
 
 
-// ✅ UPDATED: Login now creates a welcome notification
 app.post('/api/login', async (req, res) => {
     const { mobile, password } = req.body;
     if (!mobile || !password) { return res.status(400).json({ error: 'Mobile and password are required' }); }
@@ -306,7 +258,6 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// ✅ RESTORED: All necessary endpoints for the app to function after login.
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
         const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url, is_admin').eq('id', req.user.id).single();
@@ -318,8 +269,6 @@ app.get('/api/data', authenticateToken, async (req, res) => {
 });
 
 
-
-// ✅ THIS IS THE CORRECTED ENDPOINT THAT FIXES THE LOGIN ISSUE
 app.get('/api/financial-summary', authenticateToken, async (req, res) => {
     try {
         const { data: user, error } = await supabase
@@ -339,10 +288,6 @@ app.get('/api/financial-summary', authenticateToken, async (req, res) => {
 });
 
 
-
-
-
-// ✅ NEW: Endpoint to fetch all notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -392,14 +337,12 @@ app.post('/api/notifications/delete-read', authenticateToken, async (req, res) =
     }
 });
 
-// ✅ NEW: Endpoint for the Deposit page to get payment methods and maintenance status.
 app.get('/api/deposit-info', authenticateToken, async (req, res) => {
     try {
         const [{ data: methods, error: methodsError }, { data: status, error: statusError }] = await Promise.all([
             supabase.from('payment_methods').select('*'),
             supabase.from('system_status').select('is_maintenance, maintenance_ends_at').eq('service_name', 'deposits').single()
         ]);
-
         if (methodsError) throw methodsError;
         if (statusError) throw statusError;
         
@@ -410,18 +353,13 @@ app.get('/api/deposit-info', authenticateToken, async (req, res) => {
     }
 });
 
-
-// ✅ UPDATED: The /recharge endpoint now securely handles file uploads from the server.
-// ✅ UPDATED: The /recharge endpoint now treats the screenshotUrl as optional.
 app.post('/api/recharge', authenticateToken, async (req, res) => {
-    // The screenshot is now optional, so we remove it from the validation.
-    const { amount, utr, screenshotUrl } = req.body; 
+    const { amount, utr, screenshotUrl } = req.body;
     if (!amount || amount <= 0 || !utr || utr.trim() === '') { 
         return res.status(400).json({ error: 'Valid amount and UTR are required' }); 
     }
     try {
         const { error } = await supabase.from('recharges').insert([
-            // screenshot_url can now be null if not provided
             { user_id: req.user.id, amount, utr: utr.trim(), screenshot_url: screenshotUrl } 
         ]);
         if (error) throw error;
@@ -432,7 +370,6 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: Withdraw endpoint now uses the new database function
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
     const { amount, method, details } = req.body;
     try {
@@ -458,7 +395,6 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ THIS IS THE CORRECTED AND COMPLETE ENDPOINT
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     console.log("\n--- Received Purchase Request ---");
     try {
@@ -466,7 +402,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         console.log("Payload received:", { id, price, name });
         console.log(`Attempting purchase for user ID: ${req.user.id}`);
 
-        // Fetch the user's current balances directly from the DB for logging
         const { data: currentUser, error: userFetchError } = await supabase
             .from('users')
             .select('balance, withdrawable_wallet, status')
@@ -486,7 +421,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
 
-        // Call the database function
         const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { 
             p_user_id: req.user.id, 
             p_amount: price 
@@ -502,7 +436,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }
         ]);
 
-// ✅ TASK SYSTEM: Update investment task progress
         await supabase.rpc('increment_task_progress', {
             p_user_id: req.user.id,
             p_task_type: 'investment',
@@ -511,7 +444,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         
         if (investmentError) {
             console.error("CRITICAL: Failed to record investment after purchase for user:", req.user.id, investmentError);
-            // Ideally, you would refund the user here.
             return res.status(500).json({ error: 'Purchase failed after payment. Please contact support immediately.' });
         }
         
@@ -522,7 +454,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); 
     }
 });
-// ✅ UPDATED: This endpoint has been corrected to fix the SyntaxError.
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -545,7 +476,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
         
         const formattedData = data.map(inv => ({
             ...inv,
-            plan_name: inv.product_plans ? inv.product_plans.name : 'Unknown Plan', // Use name from the join
+            plan_name: inv.product_plans ? inv.product_plans.name : 'Unknown Plan',
             daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
         }));
 
@@ -557,7 +488,6 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
 });
 
 
-// ✅ UPDATED: This endpoint now correctly fetches and formats ALL transaction types.
 app.get('/api/transactions', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -584,7 +514,6 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
 });
 
 
-// ✅ NEW: Endpoint to fetch the user's bet history
 app.get('/api/bet-history', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -603,7 +532,6 @@ app.get('/api/bet-history', authenticateToken, async (req, res) => {
 });
 
 
-
 app.get('/api/fake-withdrawals', (req, res) => {
     const names = ["Rahul S.", "Priya P.", "Amit K.", "Sneha G.", "Vikas S.", "Pooja V."];
     const withdrawals = Array.from({ length: 10 }, () => ({
@@ -613,7 +541,6 @@ app.get('/api/fake-withdrawals', (req, res) => {
     res.json({ withdrawals });
 });
 
-// --- AVIATOR API ENDPOINTS ---
 app.get('/api/aviator/state', authenticateToken, (req, res) => {
     res.json({ 
         gameState: aviatorGameState, 
@@ -628,13 +555,11 @@ app.post('/api/aviator/bet', authenticateToken, async (req, res) => {
     if (aviatorGameState !== 'waiting') {
         return res.status(400).json({ error: 'Betting is only allowed before the round starts.' });
     }
-    // ... (logic to deduct user balance and insert bet into aviator_bets)
     res.json({ message: 'Bet placed!' });
 });
 
 app.post('/api/aviator/cashout', authenticateToken, async (req, res) => {
     const { roundId, currentMultiplier } = req.body;
-    // ... (logic to update bet status to 'cashed_out', calculate payout, and credit user wallet)
     res.json({ message: 'Cashed out!', payout: betAmount * currentMultiplier });
 });
 
@@ -648,13 +573,9 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
     }
 });
 
-//==========================================
-//======= Pushpa game api===================
-//==========================================
-// ✅ ADD THIS NEW PUSHPA RAJ API ROUTE
 app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
     const { betAmount } = req.body;
-    const userId = req.user.id; // User ID from the JWT token
+    const userId = req.user.id;
 
     if (!betAmount || betAmount <= 0) {
         return res.status(400).json({ error: 'Invalid bet amount.' });
@@ -673,14 +594,12 @@ app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Insufficient balance.' });
         }
 
-        // Deduct the bet amount from the user's balance
         const newBalance = user.balance - betAmount;
         await supabase
             .from('users')
             .update({ balance: newBalance })
             .eq('id', userId);
 
-        // Store the bet to be processed by the game loop later
         await supabase
             .from('bets')
             .insert([{ user_id: userId, game_name: 'PushpaRaj', bet_amount: betAmount, status: 'pending' }]);
@@ -693,31 +612,25 @@ app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
     }
 });
 
-// ==========================================
-// ========== PUSHPA RAJ GAME LOGIC =========
-// ==========================================
-
 let pushpaGameState = {
-    status: 'waiting', // 'waiting', 'running', 'crashed'
+    status: 'waiting',
     roundId: `pushpa-${Date.now()}`,
     multiplier: 1.00,
     startTime: null,
     crashMultiplier: 1.00,
-    countdown: 15000, // 15 seconds
+    countdown: 15000,
     waitingTime: 15000,
     prevStatus: 'crashed'
 };
 let pushpaGameLoopInterval;
 
-// ✅ UPDATED: Admin settings for Pushpa game
 let pushpaAdminSettings = {
-    profitMode: 'admin_profit', // 'admin_profit', 'user_profit', 'user_profit_max'
-    controlMode: 'auto',        // 'auto', 'admin'
-    manualCrashPoint: null      // a number, e.g., 2.50, if controlMode is 'admin'
+    profitMode: 'admin_profit',
+    controlMode: 'auto',
+    manualCrashPoint: null
 };
 
 
-// ✅ NEW: Broadcasting function to send messages to all connected clients
 const broadcast = (message) => {
     wss.clients.forEach(client => {
         if (client.readyState === client.OPEN) {
@@ -727,7 +640,6 @@ const broadcast = (message) => {
 };
 
 const calculatePushpaCrashPoint = async (roundId) => {
-    // Admin manual override takes highest priority
     if (pushpaAdminSettings.controlMode === 'admin' && pushpaAdminSettings.manualCrashPoint) {
         return pushpaAdminSettings.manualCrashPoint;
     }
@@ -738,29 +650,20 @@ const calculatePushpaCrashPoint = async (roundId) => {
         .eq('round_id', roundId);
 
     if (error || !bets || bets.length === 0) {
-        // If no bets, generate a standard random result
         return 1 + Math.random() * 9;
     }
 
     const totalBetIn = bets.reduce((sum, bet) => sum + Number(bet.bet_amount), 0);
-
-    // Logic for 'auto' controlMode
     switch (pushpaAdminSettings.profitMode) {
         case 'user_profit':
-            // Admin can lose max 10%. We achieve this by ensuring a higher multiplier.
-            return 2.0 + Math.random() * 5; // Generous crash point between 2.00x and 7.00x
-
+            return 2.0 + Math.random() * 5;
         case 'user_profit_max':
-            // More than 50% of users should win. This means a guaranteed survivable time.
-            return 1.5 + Math.random() * 10; // Crash point between 1.50x and 11.50x
-
+            return 1.5 + Math.random() * 10;
         case 'admin_profit':
         default:
-            // Admin aims for profit. The crash point will be lower on average.
-            return 1.0 + Math.random() * 1.5; // Crash point between 1.00x and 2.50x
+            return 1.0 + Math.random() * 1.5;
     }
 };
-
 
 const runPushpaGameCycle = async () => {
     clearInterval(pushpaGameLoopInterval);
@@ -799,7 +702,7 @@ const runPushpaGameCycle = async () => {
                 pushpaGameState.roundId = `pushpa-${Date.now()}`;
                 pushpaGameState.multiplier = 1.00;
                 pushpaGameState.startTime = Date.now();
-                pushpaAdminSettings.manualCrashPoint = null; // ✅ Reset manual crash point for the new round
+                pushpaAdminSettings.manualCrashPoint = null;
 
                 const countdownInterval = setInterval(() => {
                     const elapsed = Date.now() - pushpaGameState.startTime;
@@ -809,20 +712,16 @@ const runPushpaGameCycle = async () => {
                         clearInterval(countdownInterval);
                         runPushpaGameCycle();
                     } else {
-                         broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+                            broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
                     }
                 }, 100);
             }, 5000);
         } else {
-             broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+                broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
         }
     }, 100);
 };
 
-
-// ==========================================
-// ========== AVIATOR GAME LOGIC ============
-// ==========================================
 
 let aviatorGameState = 'waiting';
 let aviatorMultiplier = 1.00;
@@ -834,12 +733,12 @@ let aviatorCountdownInterval;
 
 const getRealisticCrashPoint = () => {
     const r = Math.random();
-    if (r < 0.90) { // 90% chance for 1.00x to 10.00x
+    if (r < 0.90) {
         return 1 + Math.random() * 9;
-    } else if (r < 0.98) { // 8% chance for 10.00x to 30.00x
+    } else if (r < 0.98) {
         return 10 + Math.random() * 20;
-    } else { // 2% chance for > 30.00x
-        return 30 + Math.random() * 70; // e.g., up to 100x
+    } else {
+        return 30 + Math.random() * 70;
     }
 };
 
@@ -883,7 +782,7 @@ const runAviatorCycle = async () => {
                         runAviatorCycle();
                     }
                 }, 1000);
-            }, 5000); // 5-second grace period after crash
+            }, 5000);
         }
     }, 100);
 };
@@ -891,14 +790,11 @@ const runAviatorCycle = async () => {
 runAviatorCycle();
 
 
-// ==========================================
-// ========== LOTTERY GAME LOGIC ============
-// ==========================================
 const calculateLotteryResult = async (roundId, profitPreference) => {
     const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
     if (error) throw error;
 
-    if (bets.length === 0) { // If no bets, generate a truly random result
+    if (bets.length === 0) {
         return { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) };
     }
 
@@ -906,7 +802,7 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
     let bestOutcome = { a: -1, b: -1, netResult: -Infinity };
 
     for (let a = 0; a <= 9; a++) {
-        for (let b = a; b <= 9; b++) { // Iterate unique pairs
+        for (let b = a; b <= 9; b++) {
             let currentPayout = 0;
             bets.forEach(bet => {
                 const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
@@ -926,23 +822,21 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
         }
     }
     
-    // For Zero Profit mode, find a result that creates a small loss for the admin if possible
     if (profitPreference === 'zero_profit' && bestOutcome.netResult < 0) {
-         let zeroProfitOutcome = { ...bestOutcome };
-         for (let a = 0; a <= 9; a++) {
+          let zeroProfitOutcome = { ...bestOutcome };
+          for (let a = 0; a <= 9; a++) {
             for (let b = a; b <= 9; b++) {
-                 let currentPayout = 0;
-                 bets.forEach(bet => {
+                let currentPayout = 0;
+                bets.forEach(bet => {
                     const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
                     const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
                     if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) currentPayout += bet.bet_amount * 25;
                     else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) currentPayout += bet.bet_amount * 2.5;
-                 });
-                 const netResult = totalBetIn - currentPayout;
-                 // Find the result closest to zero, even if it's a small loss
-                 if (Math.abs(netResult) < Math.abs(zeroProfitOutcome.netResult)) {
+                   });
+                const netResult = totalBetIn - currentPayout;
+                if (Math.abs(netResult) < Math.abs(zeroProfitOutcome.netResult)) {
                     zeroProfitOutcome = { a, b, netResult };
-                 }
+                }
             }
         }
         return { a: zeroProfitOutcome.a, b: zeroProfitOutcome.b };
@@ -955,19 +849,15 @@ const processLotteryRound = async (roundId) => {
     console.log(`Processing lottery for round: ${roundId}`);
     const { data: gameState } = await supabase.from('game_state').select('lottery_profit_preference').single();
     const profitPreference = gameState?.lottery_profit_preference || 'max_profit';
-
     const result = await calculateLotteryResult(roundId, profitPreference);
-
     const { data: bets, error } = await supabase.from('lottery_bets').select('*, users(name)').eq('round_id', roundId);
     if (error) { console.error("Error fetching bets for payout:", error); return; }
-
     const winners = [];
     for (const bet of bets) {
         let payout = 0;
         let status = 'lost';
         const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
         const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
-
         if (isDoubleBet && ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a))) {
             payout = bet.bet_amount * 25;
             status = 'won';
@@ -975,14 +865,12 @@ const processLotteryRound = async (roundId) => {
             payout = bet.bet_amount * 2.5;
             status = 'won';
         }
-        
         if (payout > 0) {
             winners.push(bet.users.name);
             await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
         }
         await supabase.from('lottery_bets').update({ status, payout }).eq('id', bet.id);
     }
-
     await supabase.from('lottery_results').insert({
         round_id: roundId,
         winning_num_a: result.a,
@@ -990,26 +878,15 @@ const processLotteryRound = async (roundId) => {
         winner_count: winners.length,
         sample_winner_name: winners.length > 0 ? winners[Math.floor(Math.random() * winners.length)] : null
     });
-    
     console.log(`Round ${roundId} processed. Winning numbers: ${result.a}, ${result.b}.`);
 };
 
-// Cron job to run at the start of every hour
 cron.schedule('0 * * * *', () => {
     const roundId = getLotteryRoundId();
     processLotteryRound(roundId);
 });
 
 
-// ==========================================
-// ========== Color GAME LOGIC & ENDPOINTS ========
-// ==========================================
-// ==========================================
-// ========== GAME LOGIC & ENDPOINTS ========
-// ==========================================
-
-
-// This endpoint is ONLY for fetching the initial game history when the page loads.
 app.get('/api/game-state', authenticateToken, async (req, res) => {
     try {
         const { data: results } = await supabase.from('game_results')
@@ -1022,7 +899,6 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
     }
 });
 
-// This endpoint lets the frontend check a user's win/loss result for the popup.
 app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     const { period } = req.params;
     const userId = req.user.id;
@@ -1046,19 +922,6 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     }
 });
 
-
-
-// ==========================================
-// ========== COLOR GAME WEBSOCKET LOGIC ========
-// ==========================================
-
-let gameTimer;
-const GAME_DURATION_SECONDS = 60;
-const BETTING_WINDOW_SECONDS = 50;
-
-// In server.js
-
-// In server.js, replace the entire processRoundResults function with this:
 
 async function processRoundResults(period) {
     console.log(`[processRoundResults] Starting for period: ${period}`);
@@ -1158,9 +1021,6 @@ async function gameLoop() {
 }
 
 
-// Color game logic ends here 
-
-
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
         const { data: user, error } = await supabase.from('users').select('id, name, ip_username, status, avatar_url').eq('id', req.user.id).single();
@@ -1171,49 +1031,6 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This endpoint now includes the 'last_claim_at' timestamp
-// ✅ THIS IS THE CORRECTED ENDPOINT
-// app.get('/api/financial-summary', authenticateToken, async (req, res) => {
-//     try {
-//         // Step 1: Fetch the user's basic wallet balances and last claim time.
-//         const { data: user, error: userError } = await supabase
-//             .from('users')
-//             .select('balance, withdrawable_wallet, last_claim_at')
-//             .eq('id', req.user.id)
-//             .single();
-//         if (userError) throw userError;
-
-//         // Step 2: Call the database function to calculate the user's total claimable income for today.
-//         const { data: claimableIncome, error: rpcError } = await supabase.rpc('calculate_claimable_income', { p_user_id: req.user.id });
-//         if (rpcError) throw rpcError;
-
-//         // Step 3: Send all the correct data to the frontend.
-//         res.json({
-//             balance: user.balance,
-//             withdrawable_wallet: user.withdrawable_wallet,
-//             todaysIncome: claimableIncome, // This now contains the real calculated amount
-//             lastClaimAt: user.last_claim_at // This is needed for the cooldown timer
-//         });
-//     } catch (error) { 
-//         console.error("Financial Summary Error:", error);
-//         res.status(500).json({ error: 'Failed to fetch financial summary.' }); 
-//     }
-// });
-
-
-// ✅ FIX: Added the /api/tasks endpoint
-app.get('/api/tasks', authenticateToken, async (req, res) => {
-    try {
-        const { data, error } = await supabase.rpc('get_user_tasks', { p_user_id: req.user.id });
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        console.error("Error fetching tasks:", error);
-        res.status(500).json({ error: 'Failed to fetch tasks.' });
-    }
-});
-
-// ✅ TASK SYSTEM: New endpoint to claim a task reward
 app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
     const { taskId } = req.body;
     try {
@@ -1234,7 +1051,6 @@ app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to claim task reward.' });
     }
 });
-// ✅ FIX: Added the /api/suggestions endpoint
 app.post('/api/suggestions', authenticateToken, async (req, res) => {
     const { suggestion_text } = req.body;
     if (!suggestion_text || suggestion_text.trim() === '') {
@@ -1252,10 +1068,8 @@ app.post('/api/suggestions', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: The /api/claim-income endpoint is now fully functional and will work with the new database function.
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
-        // This calls the 'claim_daily_income' function you just created in your Supabase database
         const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', {
             p_user_id: req.user.id
         });
@@ -1273,7 +1087,6 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ UPDATED: This is the new, robust endpoint to get all referral data for the team page.
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -1316,17 +1129,11 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
 });
 
 
-// ==========================================
-// ========== ADMIN API ENDPOINTS ===========
-
-// ==========================================
-// ========== LOTTERY API ENDPOINTS =========
-// ==========================================
 app.get('/api/lottery/live-stats/:roundId', authenticateToken, async (req, res) => {
     try {
         const { roundId } = req.params;
         const { data, error } = await supabase.from('lottery_rounds').select('*').eq('round_id', roundId).single();
-        if (error) { // If round doesn't exist yet, create it
+        if (error) {
             const { data: newData, error: insertError } = await supabase.from('lottery_rounds').insert({
                 round_id: roundId,
                 base_player_count: Math.floor(Math.random() * 150) + 100,
@@ -1381,7 +1188,6 @@ app.get('/api/lottery/my-bet-result/:roundId', authenticateToken, async (req, re
 });
 
 
-// ✅ NEW: Endpoint to get a combined financial overview of ALL games.
 app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => {
     try {
         const { data: colorGameBets, error: colorErr } = await supabase.from('bets').select('amount, payout');
@@ -1404,10 +1210,6 @@ app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => 
     }
 });
 
-// ==========================================
-// ============= Admin Pushpa API============
-// ==========================================
-// ✅ UPDATED: Endpoint for admin to control Pushpa game profit mode and manual settings
 app.post('/api/admin/pushpa-settings', authenticateAdmin, (req, res) => {
     const { profitMode, controlMode, manualCrashPoint } = req.body;
     const validProfitModes = ['admin_profit', 'user_profit', 'user_profit_max'];
@@ -1419,18 +1221,15 @@ app.post('/api/admin/pushpa-settings', authenticateAdmin, (req, res) => {
     if (controlMode && validControlModes.includes(controlMode)) {
         pushpaAdminSettings.controlMode = controlMode;
     }
-    // Set manual crash point only if control mode is 'admin'
     if (controlMode === 'admin' && manualCrashPoint && !isNaN(parseFloat(manualCrashPoint))) {
         pushpaAdminSettings.manualCrashPoint = parseFloat(manualCrashPoint);
     } else {
-        // If mode is auto or no valid point is given, reset it.
         pushpaAdminSettings.manualCrashPoint = null;
     }
     
     res.json({ message: `Pushpa Raj game settings updated.`, settings: pushpaAdminSettings });
 });
 
-// ✅ NEW: Endpoint to get the profit analysis table for the current round
 app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
     try {
         const { data: bets } = await supabase
@@ -1439,15 +1238,11 @@ app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
             .eq('round_id', pushpaGameState.roundId);
         
         const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
-
         const profitTargets = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0];
         const analysis = profitTargets.map(profitMargin => {
             const targetNetProfit = totalBetIn * profitMargin;
             const targetPayout = totalBetIn - targetNetProfit;
-            
-            // This is a simplified heuristic to suggest a multiplier
             const requiredMultiplier = (targetPayout > 0 && totalBetIn > 0) ? (totalBetIn / targetPayout) : Infinity;
-
             return {
                 profitMargin: `${(profitMargin * 100).toFixed(0)}%`,
                 requiredMultiplier: isFinite(requiredMultiplier) ? requiredMultiplier.toFixed(2) + 'x' : 'High',
@@ -1456,16 +1251,12 @@ app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
                 netProfit: targetNetProfit
             };
         });
-
         res.json({ analysis });
     } catch (error) {
         res.status(500).json({ error: 'Failed to generate Pushpa Raj analysis.' });
     }
 });
-// ==========================================
 
-// ==========================================
-// ✅ UPDATED: This endpoint now fetches the screenshot URL for the admin panel.
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -1479,7 +1270,6 @@ app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
 });
 
 
-
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('withdrawals').select('*').eq('status', 'pending').order('request_date', { ascending: true });
@@ -1488,7 +1278,6 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
 
-// ✅ UPDATED: This endpoint now triggers the referral bonus distribution function in the database.
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
     try {
@@ -1498,7 +1287,6 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
         
         await supabase.rpc('increment_user_balance', { p_user_id: recharge.user_id, p_amount: recharge.amount });
         await supabase.from('recharges').update({ status: 'approved', processed_date: new Date() }).eq('id', id);
-        // ✅ TASK SYSTEM: Update deposit task progress
         await supabase.rpc('increment_task_progress', {
             p_user_id: recharge.user_id,
             p_task_type: 'deposit',
@@ -1515,7 +1303,6 @@ app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) 
 });
 
 
-
 app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -1526,22 +1313,18 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
     }
 });
 
-// ✅ UPDATED: Approving a withdrawal now creates a notification
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
     try {
         const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
-
         await supabase.rpc('decrement_user_withdrawable_wallet', { p_user_id: withdrawal.user_id, p_amount: withdrawal.amount });
         await supabase.from('withdrawals').update({ status: 'approved' }).eq('id', id);
-
         await supabase.from('notifications').insert({
             user_id: withdrawal.user_id,
             type: 'withdrawal',
             message: `Your withdrawal of ₹${withdrawal.amount.toLocaleString()} has been approved.`
         });
-
         res.json({ message: 'Withdrawal approved and notification sent.' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to approve withdrawal.' });
@@ -1562,15 +1345,12 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
     }
 });
 
-// ✅ THIS IS THE MAIN FIX
 app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
         if (error) throw error;
-
         const lastRun = new Date(data.last_run_at);
-        const nextRun = new Date(lastRun.getTime() + 2 * 60 * 60 * 1000); // 2-hour cooldown
-
+        const nextRun = new Date(lastRun.getTime() + 2 * 60 * 60 * 1000);
         res.json({
             canDistribute: new Date() > nextRun,
             nextDistributionTime: nextRun.toISOString()
@@ -1584,52 +1364,42 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
     try {
         const { data: task, error: taskError } = await supabase.from('daily_tasks').select('last_run_at').eq('task_name', 'distribute_income').single();
         if (taskError) throw taskError;
-
         const lastRun = new Date(task.last_run_at);
         if (new Date().getTime() - lastRun.getTime() < 2 * 60 * 60 * 1000) {
             return res.status(429).json({ error: `You can only distribute income once every 2 hours.` });
         }
-
         const { data: activeInvestments, error: fetchError } = await supabase
             .from('investments')
             .select('user_id, product_plans(daily_income)')
             .eq('status', 'active');
         if (fetchError) throw fetchError;
-
         const incomeDistribution = {};
         for (const investment of activeInvestments) {
             if (investment.product_plans) {
                 incomeDistribution[investment.user_id] = (incomeDistribution[investment.user_id] || 0) + investment.product_plans.daily_income;
             }
         }
-
         const notifications = [];
         for (const userId in incomeDistribution) {
             const amount = incomeDistribution[userId];
             await supabase.rpc('increment_unclaimed_income', { p_user_id: parseInt(userId), p_amount: amount });
-            
             notifications.push({
                 user_id: parseInt(userId),
                 type: 'income',
                 message: `Your daily income of ₹${amount.toLocaleString()} is ready to be claimed!`
             });
         }
-        
         if (notifications.length > 0) {
             await supabase.from('notifications').insert(notifications);
         }
-        
         await supabase.from('daily_tasks').update({ last_run_at: new Date().toISOString() }).eq('task_name', 'distribute_income');
-        
         res.json({ message: `Daily income distributed to ${Object.keys(incomeDistribution).length} users.` });
-
     } catch (error) {
         console.error("Distribute income error:", error);
         res.status(500).json({ error: 'Failed to distribute income.' });
     }
 });
 
-// ✅ UPDATED: Setting user status now creates the specific notifications you requested
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
     const { userId, status } = req.body;
     if (!userId || !['active', 'non-active', 'flagged'].includes(status)) {
@@ -1637,14 +1407,12 @@ app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
     }
     try {
         await supabase.from('users').update({ status }).eq('id', userId);
-        
         let notificationMessage = '';
         if (status === 'non-active') {
             notificationMessage = "Your account has been marked as non-active because of suspicious activity on your account.";
         } else if (status === 'flagged') {
             notificationMessage = "Your account has been marked flagged for violating the rules.";
         }
-
         if (notificationMessage) {
             await supabase.from('notifications').insert({
                 user_id: userId,
@@ -1652,14 +1420,12 @@ app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
                 message: notificationMessage
             });
         }
-        
         res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update user status.' });
     }
 });
 
-// ✅ NEW: Endpoint to grant bonuses and create notifications
 app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     const { amount, reason, user_ids } = req.body;
     if (!amount || amount <= 0 || !reason) { return res.status(400).json({ error: 'Amount and reason are required.' }); }
@@ -1671,7 +1437,6 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
             const { data: allUsers } = await supabase.from('users').select('id');
             targetUsers = allUsers.map(u => u.id);
         }
-
         const notifications = [];
         for (const userId of targetUsers) {
             await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: userId, p_amount: amount });
@@ -1681,9 +1446,9 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
                 message: `You have received a bonus of ₹${amount.toLocaleString()}! Reason: ${reason}`
             });
         }
-        
-        await supabase.from('notifications').insert(notifications);
-
+        if (notifications.length > 0) {
+            await supabase.from('notifications').insert(notifications);
+        }
         res.json({ message: `Bonus of ₹${amount} granted to ${targetUsers.length} users.` });
     } catch (err) {
         console.error("Grant Bonus Error:", err);
@@ -1691,7 +1456,6 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     }
 });
 
-// ✅ NEW: Endpoint to create a global promotion message
 app.post('/api/admin/create-promotion', authenticateAdmin, async (req, res) => {
     const { title, message } = req.body;
     if (!title || !message) {
@@ -1709,7 +1473,6 @@ app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, re
     try {
         const { data: appState, error: stateError } = await supabase.from('game_state').select('last_income_distribution').single();
         if (stateError) throw stateError;
-
         if (appState.last_income_distribution) {
             const lastTime = new Date(appState.last_income_distribution).getTime();
             const now = new Date().getTime();
@@ -1717,12 +1480,9 @@ app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, re
                 return res.status(429).json({ error: 'Income can only be distributed once every 24 hours.' });
             }
         }
-        
         const { data: updatedUsers, error: rpcError } = await supabase.rpc('distribute_income_to_all_active_users');
         if (rpcError) throw rpcError;
-
         await supabase.from('game_state').update({ last_income_distribution: new Date().toISOString() }).eq('id', 1);
-
         res.json({ message: `Successfully distributed daily income to ${updatedUsers} users.` });
     } catch (err) {
         res.status(500).json({ error: 'Failed to distribute daily income.' });
@@ -1768,7 +1528,6 @@ app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) =>
     }
 });
 
-// ✅ NEW: Endpoint to get a user's income eligibility status.
 app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, res) => {
     const { userId } = req.params;
     try {
@@ -1788,7 +1547,6 @@ app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, 
     }
 });
 
-// ✅ NEW: Endpoint for admins to allow or block a user's income.
 app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) => {
     const { userId, canReceiveIncome } = req.body;
     if (!userId || typeof canReceiveIncome !== 'boolean') {
@@ -1799,7 +1557,6 @@ app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) =>
             .from('users')
             .update({ can_receive_income: canReceiveIncome })
             .eq('id', userId);
-
         if (error) throw error;
         const action = canReceiveIncome ? 'enabled' : 'disabled';
         res.json({ message: `Successfully ${action} income for User ID: ${userId}.` });
@@ -1807,7 +1564,7 @@ app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) =>
         res.status(500).json({ error: 'Failed to update user income status.' });
     }
 });
-// ✅ ADD this new endpoint for the admin panel's financial overview table
+
 app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
     try {
         const { data: deposits, error: depError } = await supabase
@@ -1815,17 +1572,14 @@ app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
             .select('amount')
             .eq('status', 'approved');
         if (depError) throw depError;
-
         const { data: withdrawals, error: wdError } = await supabase
             .from('withdrawals')
             .select('amount')
             .eq('status', 'approved');
         if (wdError) throw wdError;
-
         const totalDeposits = deposits.reduce((sum, d) => sum + d.amount, 0);
         const totalWithdrawals = withdrawals.reduce((sum, w) => sum + w.amount, 0);
         const platformPL = totalDeposits - totalWithdrawals;
-
         res.json({
             totalDeposits,
             totalWithdrawals,
@@ -1838,11 +1592,6 @@ app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
 });
 
 
-
-// ==========================================
-// ========== ADMIN GAME API ENDPOINTS ===========
-
-// --- ADMIN AVIATOR ENDPOINTS ---
 app.get('/api/admin/aviator/live-bets', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('aviator_bets').select('*, users(name)').eq('round_id', aviatorRoundId);
@@ -1858,25 +1607,20 @@ app.post('/api/admin/aviator-settings', authenticateAdmin, (req, res) => {
     if (mode) aviatorAdminSettings.mode = mode;
     if (profitMargin) aviatorAdminSettings.profitMargin = parseFloat(profitMargin);
     if (manualCrashPoint) aviatorAdminSettings.manualCrashPoint = parseFloat(manualCrashPoint);
-    else aviatorAdminSettings.manualCrashPoint = null; // Reset if not provided
+    else aviatorAdminSettings.manualCrashPoint = null;
     
     res.json({ message: 'Aviator settings updated.', settings: aviatorAdminSettings });
 });
-// ✅ NEW: Endpoint to calculate the profit analysis table for the admin
+
 app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
     try {
         const { data: bets } = await supabase.from('aviator_bets').select('*').eq('round_id', aviatorRoundId);
         const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
-
         const profitTargets = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0];
         const analysis = profitTargets.map(profitMargin => {
             const targetNetProfit = totalBetIn * profitMargin;
             const targetPayout = totalBetIn - targetNetProfit;
-            
-            // This is a simplified calculation to find the multiplier that results in the target payout
-            // A real-world scenario would need a more complex algorithm to iterate through cashed-out bets
             const requiredMultiplier = bets.length > 0 ? (totalBetIn / (targetPayout || 1)) : 1.5;
-
             return {
                 profitMargin: `${(profitMargin * 100).toFixed(0)}%`,
                 requiredMultiplier: requiredMultiplier.toFixed(2) + 'x',
@@ -1885,7 +1629,6 @@ app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
                 netProfit: targetNetProfit
             };
         });
-
         res.json({ analysis });
     } catch (error) {
         res.status(500).json({ error: 'Failed to generate Aviator analysis.' });
@@ -1893,10 +1636,6 @@ app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
 });
 
 
-
-
-// --- ADMIN LOTTERY ENDPOINTS ---
-// ✅ FIX: Added the missing /api/admin/lottery-analysis endpoint
 app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
     const { roundId } = req.query;
     if (!roundId) {
@@ -1905,39 +1644,34 @@ app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
     try {
         const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
         if (error) throw error;
-
         if (!bets || bets.length === 0) {
             return res.json({ outcomes: [] });
         }
-
         const totalBetIn = bets.reduce((sum, bet) => sum + Number(bet.bet_amount), 0);
         const outcomes = [];
-
         for (let a = 0; a <= 9; a++) {
             for (let b = a; b <= 9; b++) {
                 let currentPayout = 0;
                 let totalBetOnPair = 0;
-
                 bets.forEach(bet => {
                     const isSingleBet = bet.selected_num_b === null;
                     if (isSingleBet) {
                         if (bet.selected_num_a === a || bet.selected_num_a === b) {
-                             currentPayout += Number(bet.bet_amount) * 2.5;
+                               currentPayout += Number(bet.bet_amount) * 2.5;
                         }
-                    } else { // Double bet
+                    } else {
                         if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
                             currentPayout += Number(bet.bet_amount) * 25;
                             totalBetOnPair += Number(bet.bet_amount);
                         }
                     }
                 });
-                
                 const netResult = totalBetIn - currentPayout;
                 outcomes.push({ a, b, payout: currentPayout, netResult, totalBetOnPair });
             }
         }
         
-        outcomes.sort((x, y) => y.netResult - x.netResult); // Sort by most profitable for admin
+        outcomes.sort((x, y) => y.netResult - x.netResult);
         
         res.json({ outcomes });
     } catch (err) {
@@ -1952,10 +1686,8 @@ app.get('/api/admin/lottery-analysis/:roundId', authenticateAdmin, async (req, r
     try {
         const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
         if (error) throw error;
-
         const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.bet_amount), 0);
         const analysis = [];
-
         for (let a = 0; a <= 9; a++) {
             for (let b = a; b <= 9; b++) {
                 let payout = 0;
@@ -1973,7 +1705,7 @@ app.get('/api/admin/lottery-analysis/:roundId', authenticateAdmin, async (req, r
                 analysis.push({ a, b, totalBetOnPair, payout, netResult: totalBetIn - payout });
             }
         }
-        analysis.sort((x, y) => y.netResult - x.netResult); // Sort by most profitable for admin
+        analysis.sort((x, y) => y.netResult - x.netResult);
         res.json({ analysis });
     } catch (err) {
         res.status(500).json({ error: 'Failed to analyze lottery round.' });
@@ -1997,19 +1729,13 @@ app.post('/api/admin/lottery-set-result', authenticateAdmin, async (req, res) =>
 });
 
 
-
-
-
-// ==========================================
-
-
 app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    try { 
-        const { data, error } = await supabase.from('game_state').select('*').single(); 
-        if (error) throw error; 
-        res.json({ status: data }); 
-    } catch (err) { 
-        res.status(500).json({ error: 'Failed to fetch game status.' }); 
+    try {
+        const { data, error } = await supabase.from('game_state').select('*').single();
+        if (error) throw error;
+        res.json({ status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch game status.' });
     }
 });
 
@@ -2019,23 +1745,22 @@ app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     if (typeof is_on === 'boolean') updateData.is_on = is_on;
     if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
     if (['users', 'admin'].includes(payout_priority)) updateData.payout_priority = payout_priority;
-
     if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
-    try { 
-        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single(); 
-        if (error) throw error; 
-        res.json({ message: 'Game status updated.', status: data }); 
-    } catch (err) { 
-        res.status(500).json({ error: 'Failed to update game status.' }); 
+    try {
+        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single();
+        if (error) throw error;
+        res.json({ message: 'Game status updated.', status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update game status.' });
     }
 });
 
 app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
-    try { 
-        await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1); 
-        res.json({ message: 'Next result set.' }); 
-    } catch(err) { 
-        res.status(500).json({ error: 'Failed to set next result.' }); 
+    try {
+        await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1);
+        res.json({ message: 'Next result set.' });
+    } catch(err) {
+        res.status(500).json({ error: 'Failed to set next result.' });
     }
 });
 
@@ -2044,13 +1769,10 @@ app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
         if (gsError) throw gsError;
         const current_period = gameState.current_period;
-
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
         const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
         const today_start_period = Number(yyyymmdd + "0001");
-
         const [
             { data: totalStats, error: totalErr },
             { data: todayStats, error: todayErr },
@@ -2060,37 +1782,30 @@ app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
             supabase.from('bets').select('amount, payout').gte('game_period', today_start_period),
             supabase.from('bets').select('amount, payout').eq('game_period', current_period)
         ]);
-
         if (totalErr || todayErr || currentErr) throw totalErr || todayErr || currentErr;
-
         const calculatePL = (records) => {
             if (!records) return { totalIn: 0, totalOut: 0, pl: 0 };
             const totalIn = records.reduce((sum, r) => sum + (r.amount || 0), 0);
             const totalOut = records.reduce((sum, r) => sum + (r.payout || 0), 0);
             return { totalIn, totalOut, pl: totalIn - totalOut };
         };
-
         res.json({
             total: calculatePL(totalStats),
             today: calculatePL(todayStats),
             currentPeriod: calculatePL(currentStats)
         });
-
     } catch (error) {
         console.error("Error fetching game statistics:", error);
         res.status(500).json({ error: 'Failed to fetch game statistics.' });
     }
 });
 
-// ✅ FIX: Create the missing /api/admin/current-bets endpoint
 app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     try {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
         if (gsError) throw gsError;
-        
         const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
         if (betsError) throw betsError;
-
         const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
         bets.forEach(bet => {
             if (summary.hasOwnProperty(bet.bet_on)) {
@@ -2104,15 +1819,12 @@ app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     }
 });
 
-// ✅ NEW: Endpoint for the "Admin's Choice" feature
 app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) => {
     try {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
         if (gsError) throw gsError;
-
         const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
         if (betsError) throw betsError;
-
         const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
         const outcomes = Array.from({ length: 10 }, (_, i) => {
             const winningColors = getNumberProperties(i);
@@ -2125,14 +1837,11 @@ app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) 
             });
             return { number: i, pl: totalBetIn - totalPayout };
         });
-
-        outcomes.sort((a, b) => b.pl - a.pl); // Sort by P/L descending (most profitable for admin first)
-        
+        outcomes.sort((a, b) => b.pl - a.pl);
         const analysis = {
             mostProfitable: outcomes.slice(0, 3),
-            leastProfitable: outcomes.slice(-3).reverse() // Last 3, reversed to show worst at the bottom
+            leastProfitable: outcomes.slice(-3).reverse()
         };
-
         res.json(analysis);
     } catch (err) {
         console.error("Error analyzing game outcomes:", err);
@@ -2140,9 +1849,6 @@ app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) 
     }
 });
 
-// ==========================================
-// ========== DAILY SCHEDULED TASK ==========
-// ==========================================
 async function dailyInvestmentUpdate() {
     console.log('Running daily investment update...');
     try {
@@ -2154,37 +1860,41 @@ async function dailyInvestmentUpdate() {
     }
 }
 
-// Run the task once on server start, then every 24 hours
 dailyInvestmentUpdate();
 setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
 
-// ==========================================
-// ============== SERVER START ==============
-// ==========================================
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
 
-
-// ✅ NEW: Create a WebSocket server that does not bind to a port on its own
 const wss = new WebSocketServer({ noServer: true });
 
-// ... (Your server start and wss declaration are correct)
+server.on('upgrade', (request, socket, head) => {
+    if (request.url.startsWith('/')) { // Accept all connections for now
+        wss.handleUpgrade(request, socket, head, ws => {
+            wss.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
+});
 
-// ✅ CORRECTED: WebSocket connection handler with consolidated try/catch block
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
-
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message.toString());
-
-            // --- Consolidated game logic within the single try block ---
             if (data.game === 'color-prediction' && data.action === 'bet') {
                 const { amount, bet_on, token } = data.payload;
-                if (!token) return;
+                if (!token) {
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Authentication required.' }));
+                    return;
+                }
                 const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user || !user.id) return;
+                if (!user || !user.id) {
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Invalid authentication token.' }));
+                    return;
+                }
 
                 const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
                 const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
@@ -2202,8 +1912,6 @@ wss.on('connection', ws => {
                     ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
                 }
             }
-
-            // --- Your Pushpa Game Logic, moved inside the try block ---
             if (data.game === 'pushpa') {
                 const { token } = data.payload;
                 if (!token) return;
@@ -2215,7 +1923,6 @@ wss.on('connection', ws => {
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
                     }
                     const { betAmount, roundId } = data.payload;
-
                     const { error } = await supabase.rpc('place_pushpa_bet', {
                         p_user_id: user.id,
                         p_round_id: roundId,
@@ -2233,24 +1940,20 @@ wss.on('connection', ws => {
                 if (data.action === 'cashout') {
                     if (pushpaGameState.status !== 'running') return;
                     const { roundId } = data.payload;
-
                     const { data: result, error } = await supabase.rpc('cashout_pushpa_bet', {
                         p_user_id: user.id,
                         p_round_id: roundId,
                         p_cashout_multiplier: pushpaGameState.multiplier
                     });
-
                     if (error || !result || !result.success) {
                         console.error("Pushpa cashout error:", error);
                         return;
                     }
-
                     ws.send(JSON.stringify({ type: 'PUSHPA_CASHOUT_SUCCESS', payout: result.payout }));
                 }
             }
 
         } catch (e) {
-            // ✅ All errors from both game logics are now caught here
             console.error('Failed to process WebSocket message:', e);
         }
     });
@@ -2259,6 +1962,5 @@ wss.on('connection', ws => {
 });
 
 
-// Start the game loop
 gameLoop();
 runPushpaGameCycle();
