@@ -645,6 +645,123 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
+// ========== PUSHPA RAJ GAME LOGIC =========
+// ==========================================
+
+let pushpaGameState = {
+    status: 'waiting', // 'waiting', 'running', 'crashed'
+    roundId: `pushpa-${Date.now()}`,
+    multiplier: 1.00,
+    startTime: null,
+    crashMultiplier: 1.00,
+    countdown: 15000, // 15 seconds
+    waitingTime: 15000,
+    prevStatus: 'crashed'
+};
+let pushpaGameLoopInterval;
+
+// ✅ UPDATED: Admin settings for Pushpa game
+let pushpaAdminSettings = {
+    profitMode: 'admin_profit', // 'admin_profit', 'user_profit', 'user_profit_max'
+    controlMode: 'auto',        // 'auto', 'admin'
+    manualCrashPoint: null      // a number, e.g., 2.50, if controlMode is 'admin'
+};
+
+const calculatePushpaCrashPoint = async (roundId) => {
+    // Admin manual override takes highest priority
+    if (pushpaAdminSettings.controlMode === 'admin' && pushpaAdminSettings.manualCrashPoint) {
+        return pushpaAdminSettings.manualCrashPoint;
+    }
+
+    const { data: bets, error } = await supabase
+        .from('pushpa_bets')
+        .select('bet_amount')
+        .eq('round_id', roundId);
+
+    if (error || !bets || bets.length === 0) {
+        // If no bets, generate a standard random result
+        return 1 + Math.random() * 9;
+    }
+
+    const totalBetIn = bets.reduce((sum, bet) => sum + Number(bet.bet_amount), 0);
+
+    // Logic for 'auto' controlMode
+    switch (pushpaAdminSettings.profitMode) {
+        case 'user_profit':
+            // Admin can lose max 10%. We achieve this by ensuring a higher multiplier.
+            return 2.0 + Math.random() * 5; // Generous crash point between 2.00x and 7.00x
+
+        case 'user_profit_max':
+            // More than 50% of users should win. This means a guaranteed survivable time.
+            return 1.5 + Math.random() * 10; // Crash point between 1.50x and 11.50x
+
+        case 'admin_profit':
+        default:
+            // Admin aims for profit. The crash point will be lower on average.
+            return 1.0 + Math.random() * 1.5; // Crash point between 1.00x and 2.50x
+    }
+};
+
+
+const runPushpaGameCycle = async () => {
+    clearInterval(pushpaGameLoopInterval);
+    pushpaGameState.prevStatus = pushpaGameState.status;
+    pushpaGameState.status = 'running';
+    pushpaGameState.startTime = Date.now();
+    
+    pushpaGameState.crashMultiplier = await calculatePushpaCrashPoint(pushpaGameState.roundId);
+    
+    supabase.from('pushpa_rounds').insert({
+        round_id: pushpaGameState.roundId,
+        crash_multiplier: pushpaGameState.crashMultiplier
+    }).then(({ error }) => {
+        if (error) console.error("Error saving Pushpa round:", error);
+    });
+
+    pushpaGameLoopInterval = setInterval(async () => {
+        const elapsedTime = (Date.now() - pushpaGameState.startTime) / 1000;
+        pushpaGameState.multiplier = parseFloat((1 + elapsedTime * 0.2 + Math.pow(elapsedTime, 2) * 0.01).toFixed(2));
+        
+        if (pushpaGameState.multiplier >= pushpaGameState.crashMultiplier) {
+            clearInterval(pushpaGameLoopInterval);
+            pushpaGameState.prevStatus = pushpaGameState.status;
+            pushpaGameState.status = 'crashed';
+            
+            await supabase.from('pushpa_bets')
+                .update({ status: 'lost' })
+                .eq('round_id', pushpaGameState.roundId)
+                .eq('status', 'pending');
+
+            broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+
+            setTimeout(() => {
+                pushpaGameState.prevStatus = pushpaGameState.status;
+                pushpaGameState.status = 'waiting';
+                pushpaGameState.roundId = `pushpa-${Date.now()}`;
+                pushpaGameState.multiplier = 1.00;
+                pushpaGameState.startTime = Date.now();
+                pushpaAdminSettings.manualCrashPoint = null; // ✅ Reset manual crash point for the new round
+
+                const countdownInterval = setInterval(() => {
+                    const elapsed = Date.now() - pushpaGameState.startTime;
+                    pushpaGameState.countdown = pushpaGameState.waitingTime - elapsed;
+                    
+                    if (pushpaGameState.countdown <= 0) {
+                        clearInterval(countdownInterval);
+                        runPushpaGameCycle();
+                    } else {
+                         broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+                    }
+                }, 100);
+            }, 5000);
+        } else {
+             broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+        }
+    }, 100);
+};
+
+
+// ==========================================
 // ========== AVIATOR GAME LOGIC ============
 // ==========================================
 
@@ -1228,7 +1345,65 @@ app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => 
     }
 });
 
+// ==========================================
+// ============= Admin Pushpa API============
+// ==========================================
+// ✅ UPDATED: Endpoint for admin to control Pushpa game profit mode and manual settings
+app.post('/api/admin/pushpa-settings', authenticateAdmin, (req, res) => {
+    const { profitMode, controlMode, manualCrashPoint } = req.body;
+    const validProfitModes = ['admin_profit', 'user_profit', 'user_profit_max'];
+    const validControlModes = ['auto', 'admin'];
 
+    if (profitMode && validProfitModes.includes(profitMode)) {
+        pushpaAdminSettings.profitMode = profitMode;
+    }
+    if (controlMode && validControlModes.includes(controlMode)) {
+        pushpaAdminSettings.controlMode = controlMode;
+    }
+    // Set manual crash point only if control mode is 'admin'
+    if (controlMode === 'admin' && manualCrashPoint && !isNaN(parseFloat(manualCrashPoint))) {
+        pushpaAdminSettings.manualCrashPoint = parseFloat(manualCrashPoint);
+    } else {
+        // If mode is auto or no valid point is given, reset it.
+        pushpaAdminSettings.manualCrashPoint = null;
+    }
+    
+    res.json({ message: `Pushpa Raj game settings updated.`, settings: pushpaAdminSettings });
+});
+
+// ✅ NEW: Endpoint to get the profit analysis table for the current round
+app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: bets } = await supabase
+            .from('pushpa_bets')
+            .select('bet_amount')
+            .eq('round_id', pushpaGameState.roundId);
+        
+        const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
+
+        const profitTargets = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0];
+        const analysis = profitTargets.map(profitMargin => {
+            const targetNetProfit = totalBetIn * profitMargin;
+            const targetPayout = totalBetIn - targetNetProfit;
+            
+            // This is a simplified heuristic to suggest a multiplier
+            const requiredMultiplier = (targetPayout > 0 && totalBetIn > 0) ? (totalBetIn / targetPayout) : Infinity;
+
+            return {
+                profitMargin: `${(profitMargin * 100).toFixed(0)}%`,
+                requiredMultiplier: isFinite(requiredMultiplier) ? requiredMultiplier.toFixed(2) + 'x' : 'High',
+                totalBet: totalBetIn,
+                estimatedPayout: targetPayout,
+                netProfit: targetNetProfit
+            };
+        });
+
+        res.json({ analysis });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to generate Pushpa Raj analysis.' });
+    }
+});
+// ==========================================
 
 // ==========================================
 // ✅ UPDATED: This endpoint now fetches the screenshot URL for the admin panel.
@@ -1964,6 +2139,59 @@ wss.on('connection', ws => {
         } catch (e) {
             console.error('Failed to process WebSocket message:', e);
         }
+
+         // ✅ ADD THIS NEW LOGIC FOR PUSHPA GAME
+            if (data.game === 'pushpa') {
+                const { token } = data.payload;
+                if (!token) return;
+                const user = jwt.verify(token, process.env.JWT_SECRET);
+                if (!user || !user.id) return;
+
+                if (data.action === 'bet') {
+                    if (pushpaGameState.status !== 'waiting') {
+                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
+                    }
+                    const { betAmount, roundId } = data.payload;
+                    
+                    // Use RPC to deduct balance and place bet
+                    const { error } = await supabase.rpc('place_pushpa_bet', {
+                        p_user_id: user.id,
+                        p_round_id: roundId,
+                        p_bet_amount: betAmount
+                    });
+
+                    if (error) {
+                        console.error("Pushpa bet error:", error);
+                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
+                    }
+                    
+                    ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
+                }
+
+                if (data.action === 'cashout') {
+                    if (pushpaGameState.status !== 'running') return; // Can't cashout if not running
+                    const { roundId } = data.payload;
+
+                    const { data: result, error } = await supabase.rpc('cashout_pushpa_bet', {
+                        p_user_id: user.id,
+                        p_round_id: roundId,
+                        p_cashout_multiplier: pushpaGameState.multiplier
+                    });
+
+                    if (error || !result || !result.success) {
+                        console.error("Pushpa cashout error:", error);
+                        return; // Don't notify user, just fail silently on backend
+                    }
+
+                    ws.send(JSON.stringify({ type: 'PUSHPA_CASHOUT_SUCCESS', payout: result.payout }));
+                }
+            }
+
+        } catch (e) {
+            console.error('Failed to process WebSocket message:', e);
+        }
+
+        
     });
     ws.on('close', () => console.log('Client disconnected'));
 });
@@ -1978,3 +2206,4 @@ function broadcast(data) {
 
 // Start the game loop
 gameLoop();
+runPushpaGameCycle();
