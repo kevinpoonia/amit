@@ -455,11 +455,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         
         // Send a notification to the admin for pre-sale approval
         if (isPreSale) {
-            await supabase.from('notifications').insert({
-                user_id: 1, // Assuming admin user ID is 1
-                type: 'admin_action_required',
-                message: `New pre-sale purchase by User ID ${req.user.id} for plan ${name}. Action required.`
-            });
+            // No notification to user.
             console.log("--- Pre-Sale Purchase submitted for Admin Approval ---");
             res.json({ message: 'Pre-sale purchase successfully submitted for approval.' });
         } else {
