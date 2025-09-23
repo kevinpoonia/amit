@@ -15,7 +15,7 @@ dotenv.config();
 // Initialize Express app
 const app = express();
 // ✅ NEW: Create a standard HTTP server that both Express and WebSocket can use
-const server = http.createServer(app);
+
 const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
