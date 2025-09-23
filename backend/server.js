@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
 
-const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000','https://www.moneyplus.today/'];
+const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000','https://www.moneyplus.today/', 'https://moneyplus.today'];
 
 const corsOptions = {
     origin: (origin, callback) => {
