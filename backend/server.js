@@ -922,6 +922,10 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     }
 });
 
+// ✅ FIX: Declare these variables in a global scope so they are defined for all functions
+let gameTimer;
+const GAME_DURATION_SECONDS = 60;
+const BETTING_WINDOW_SECONDS = 50;
 
 async function processRoundResults(period) {
     console.log(`[processRoundResults] Starting for period: ${period}`);
