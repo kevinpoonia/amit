@@ -420,7 +420,11 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         if (['flagged', 'non-active'].includes(currentUser.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
-
+        
+        // Check if it's a pre-sale product
+        const preSaleProducts = [102, 103, 104, 105];
+        const isPreSale = preSaleProducts.includes(id);
+        
         const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { 
             p_user_id: req.user.id, 
             p_amount: price 
@@ -432,9 +436,11 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Insufficient total balance.' });
         }
 
-        const { error: investmentError } = await supabase.from('investments').insert([
-            { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: 'active', days_left: durationDays }
-        ]);
+        const investmentStatus = isPreSale ? 'pre_sale_pending' : 'active';
+        
+        const { data: investment, error: investmentError } = await supabase.from('investments').insert([
+            { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: investmentStatus, days_left: durationDays }
+        ]).select().single();
 
         await supabase.rpc('increment_task_progress', {
             p_user_id: req.user.id,
@@ -447,8 +453,19 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(500).json({ error: 'Purchase failed after payment. Please contact support immediately.' });
         }
         
-        console.log("--- Purchase Successful ---");
-        res.json({ message: 'Plan purchased successfully!' });
+        // Send a notification to the admin for pre-sale approval
+        if (isPreSale) {
+            await supabase.from('notifications').insert({
+                user_id: 1, // Assuming admin user ID is 1
+                type: 'admin_action_required',
+                message: `New pre-sale purchase by User ID ${req.user.id} for plan ${name}. Action required.`
+            });
+            console.log("--- Pre-Sale Purchase submitted for Admin Approval ---");
+            res.json({ message: 'Pre-sale purchase successfully submitted for approval.' });
+        } else {
+            console.log("--- Purchase Successful ---");
+            res.json({ message: 'Plan purchased successfully!' });
+        }
     } catch (error) { 
         console.error("Purchase Plan Error:", error);
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); 
@@ -464,6 +481,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
                 status,
                 days_left,
                 created_at,
+                plan_id,
                 product_plans (
                     name, 
                     daily_income
@@ -858,10 +876,10 @@ const processLotteryRound = async (roundId) => {
         let status = 'lost';
         const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
         const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
-        if (isDoubleBet && ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a))) {
+        if (isDoubleBet && ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === b && bet.selected_num_b === a))) {
             payout = bet.bet_amount * 25;
             status = 'won';
-        } else if (isSingleBet && (bet.selected_num_a === result.a || bet.selected_num_a === result.b)) {
+        } else if (isSingleBet && (bet.selected_num_a === result.a || bet.selected_num_a === b)) {
             payout = bet.bet_amount * 2.5;
             status = 'won';
         }
@@ -922,7 +940,6 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     }
 });
 
-// ✅ FIX: Declare these variables in a global scope so they are defined for all functions
 let gameTimer;
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
@@ -1874,7 +1891,7 @@ server.listen(PORT, '0.0.0.0', () => {
 const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
-    if (request.url.startsWith('/')) { // Accept all connections for now
+    if (request.url.startsWith('/')) {
         wss.handleUpgrade(request, socket, head, ws => {
             wss.emit('connection', ws, request);
         });
@@ -1968,3 +1985,105 @@ wss.on('connection', ws => {
 
 gameLoop();
 runPushpaGameCycle();
+
+
+// --- ADMIN API ENDPOINTS ---
+// New endpoints for pre-sale product approvals
+app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: preSaleRequests, error } = await supabase
+            .from('investments')
+            .select('id, user_id, plan_name, created_at')
+            .eq('status', 'pre_sale_pending')
+            .order('created_at', { ascending: true });
+
+        if (error) throw error;
+        res.json({ preSaleRequests: preSaleRequests || [] });
+    } catch (err) {
+        console.error("Error fetching pending pre-sale requests:", err);
+        res.status(500).json({ error: 'Failed to fetch pending pre-sale requests.' });
+    }
+});
+
+app.post('/api/admin/pre-sale/approve', authenticateAdmin, async (req, res) => {
+    const { id } = req.body;
+    try {
+        // Fetch the pre-sale request to get user_id and amount
+        const { data: investment, error: fetchError } = await supabase
+            .from('investments')
+            .select('user_id, plan_name')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !investment) {
+            return res.status(404).json({ error: 'Pre-sale request not found.' });
+        }
+
+        // Update the status to 'active'
+        const { error: updateError } = await supabase
+            .from('investments')
+            .update({ status: 'active' })
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+        
+        // Send a notification to the user
+        await supabase.from('notifications').insert({
+            user_id: investment.user_id,
+            type: 'pre_sale_approved',
+            message: `Your pre-sale investment in ${investment.plan_name} has been approved and is now active!`
+        });
+
+        res.json({ message: 'Pre-sale request approved successfully.' });
+    } catch (err) {
+        console.error("Error approving pre-sale request:", err);
+        res.status(500).json({ error: 'Failed to approve pre-sale request.' });
+    }
+});
+
+app.post('/api/admin/pre-sale/reject', authenticateAdmin, async (req, res) => {
+    const { id } = req.body;
+    try {
+        // Fetch the pre-sale request to get user_id and amount
+        const { data: investment, error: fetchError } = await supabase
+            .from('investments')
+            .select('user_id, amount, plan_name')
+            .eq('id', id)
+            .single();
+        
+        if (fetchError || !investment) {
+            return res.status(404).json({ error: 'Pre-sale request not found.' });
+        }
+
+        // Update the status to 'rejected'
+        const { error: updateError } = await supabase
+            .from('investments')
+            .update({ status: 'rejected' })
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+        
+        // Refund the user
+        const { error: refundError } = await supabase.rpc('increment_user_balance', {
+            p_user_id: investment.user_id,
+            p_amount: investment.amount
+        });
+        
+        if (refundError) {
+            console.error("CRITICAL: Failed to refund user after pre-sale rejection:", refundError);
+            return res.status(500).json({ error: 'Pre-sale request rejected, but refund failed. Contact support.' });
+        }
+        
+        // Send a notification to the user
+        await supabase.from('notifications').insert({
+            user_id: investment.user_id,
+            type: 'pre_sale_rejected',
+            message: `Your pre-sale investment in ${investment.plan_name} was rejected. The amount of ₹${investment.amount} has been refunded to your account.`
+        });
+
+        res.json({ message: 'Pre-sale request rejected successfully, and user has been refunded.' });
+    } catch (err) {
+        console.error("Error rejecting pre-sale request:", err);
+        res.status(500).json({ error: 'Failed to reject pre-sale request.' });
+    }
+});
