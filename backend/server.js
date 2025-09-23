@@ -715,8 +715,7 @@ let pushpaAdminSettings = {
     controlMode: 'auto',        // 'auto', 'admin'
     manualCrashPoint: null      // a number, e.g., 2.50, if controlMode is 'admin'
 };
-// ✅ NEW: WebSocket Server instance
-const wss = new WebSocketServer({ noServer: true });
+
 
 // ✅ NEW: Broadcasting function to send messages to all connected clients
 const broadcast = (message) => {
