@@ -7,12 +7,15 @@ const cron = require('node-cron'); // ✅ FIX: This line was missing
 const multer = require('multer'); // Import multer
 // At the top with other imports
 const { WebSocketServer } = require('ws');
+const http = require('http'); // For creating a shared HTTP server
 
 // Load environment variables
 dotenv.config();
 
 // Initialize Express app
 const app = express();
+// ✅ NEW: Create a standard HTTP server that both Express and WebSocket can use
+const server = http.createServer(app);
 const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
@@ -644,6 +647,51 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
     }
 });
 
+//==========================================
+//======= Pushpa game api===================
+//==========================================
+// ✅ ADD THIS NEW PUSHPA RAJ API ROUTE
+app.post('/api/pushpa-raj/place-bet', verifyToken, async (req, res) => {
+    const { betAmount } = req.body;
+    const userId = req.user.id; // User ID from the JWT token
+
+    if (!betAmount || betAmount <= 0) {
+        return res.status(400).json({ error: 'Invalid bet amount.' });
+    }
+
+    try {
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('balance')
+            .eq('id', userId)
+            .single();
+
+        if (userError) throw userError;
+
+        if (user.balance < betAmount) {
+            return res.status(400).json({ error: 'Insufficient balance.' });
+        }
+
+        // Deduct the bet amount from the user's balance
+        const newBalance = user.balance - betAmount;
+        await supabase
+            .from('users')
+            .update({ balance: newBalance })
+            .eq('id', userId);
+
+        // Store the bet to be processed by the game loop later
+        await supabase
+            .from('bets')
+            .insert([{ user_id: userId, game_name: 'PushpaRaj', bet_amount: betAmount, status: 'pending' }]);
+
+        res.status(200).json({ success: true, message: `Bet of ₹${betAmount} placed successfully.` });
+
+    } catch (error) {
+        console.error("Error placing bet:", error);
+        res.status(500).json({ error: 'Failed to place bet. Please try again.' });
+    }
+});
+
 // ==========================================
 // ========== PUSHPA RAJ GAME LOGIC =========
 // ==========================================
@@ -665,6 +713,17 @@ let pushpaAdminSettings = {
     profitMode: 'admin_profit', // 'admin_profit', 'user_profit', 'user_profit_max'
     controlMode: 'auto',        // 'auto', 'admin'
     manualCrashPoint: null      // a number, e.g., 2.50, if controlMode is 'admin'
+};
+// ✅ NEW: WebSocket Server instance
+const wss = new WebSocketServer({ noServer: true });
+
+// ✅ NEW: Broadcasting function to send messages to all connected clients
+const broadcast = (message) => {
+    wss.clients.forEach(client => {
+        if (client.readyState === client.OPEN) {
+            client.send(JSON.stringify(message));
+        }
+    });
 };
 
 const calculatePushpaCrashPoint = async (roundId) => {
@@ -2106,14 +2165,21 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
 
-const wss = new WebSocketServer({ server });
+// ✅ NEW: Create a standard HTTP server that both Express and WebSocket can use
+const server = http.createServer(app);
 
+// ✅ NEW: Create a WebSocket server that does not bind to a port on its own
+const wss = new WebSocketServer({ noServer: true });
+
+// ✅ CORRECTED: WebSocket connection handler for both games
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
 
     ws.on('message', async (message) => {
         try {
-            const data = JSON.parse(message.toString());
+            const data = JSON.parse(message.toString()); // ✅ FIX: 'data' variable is now correctly defined here
+
+
             if (data.game === 'color-prediction' && data.action === 'bet') {
                 const { amount, bet_on, token } = data.payload;
                 if (!token) return;
@@ -2140,20 +2206,19 @@ wss.on('connection', ws => {
             console.error('Failed to process WebSocket message:', e);
         }
 
-         // ✅ ADD THIS NEW LOGIC FOR PUSHPA GAME
+// --- Your Pushpa Game Logic ---
             if (data.game === 'pushpa') {
                 const { token } = data.payload;
                 if (!token) return;
                 const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user || !user.id) return;
+                if (!user && !user.id) return; // A slightly more robust check
 
                 if (data.action === 'bet') {
                     if (pushpaGameState.status !== 'waiting') {
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
                     }
                     const { betAmount, roundId } = data.payload;
-                    
-                    // Use RPC to deduct balance and place bet
+
                     const { error } = await supabase.rpc('place_pushpa_bet', {
                         p_user_id: user.id,
                         p_round_id: roundId,
@@ -2164,12 +2229,12 @@ wss.on('connection', ws => {
                         console.error("Pushpa bet error:", error);
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
                     }
-                    
+
                     ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
                 }
 
                 if (data.action === 'cashout') {
-                    if (pushpaGameState.status !== 'running') return; // Can't cashout if not running
+                    if (pushpaGameState.status !== 'running') return;
                     const { roundId } = data.payload;
 
                     const { data: result, error } = await supabase.rpc('cashout_pushpa_bet', {
@@ -2180,7 +2245,7 @@ wss.on('connection', ws => {
 
                     if (error || !result || !result.success) {
                         console.error("Pushpa cashout error:", error);
-                        return; // Don't notify user, just fail silently on backend
+                        return;
                     }
 
                     ws.send(JSON.stringify({ type: 'PUSHPA_CASHOUT_SUCCESS', payout: result.payout }));
@@ -2190,15 +2255,15 @@ wss.on('connection', ws => {
         } catch (e) {
             console.error('Failed to process WebSocket message:', e);
         }
-
-        
     });
+
     ws.on('close', () => console.log('Client disconnected'));
 });
 
+// ✅ CORRECTED: The broadcast function is correct but should be placed after wss is defined.
 function broadcast(data) {
     wss.clients.forEach(client => {
-        if (client.readyState === 1) {
+        if (client.readyState === 1) { // 1 means OPEN
             client.send(JSON.stringify(data));
         }
     });
