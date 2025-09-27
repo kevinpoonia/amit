@@ -423,9 +423,9 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
         }
         
-        // Check if it's a pre-sale product
-        const preSaleProducts = [102, 103, 104, 105];
-        const isPreSale = preSaleProducts.includes(id);
+        // **FIX 1: All investments require admin approval initially**
+        // We set a common pending status for all investments: 'pending_admin_approval'
+        const investmentStatus = 'pending_admin_approval'; 
         
         const { data: deductionSuccess, error: rpcError } = await supabase.rpc('deduct_from_total_balance_for_purchase', { 
             p_user_id: req.user.id, 
@@ -438,8 +438,6 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Insufficient total balance.' });
         }
 
-        const investmentStatus = isPreSale ? 'pre_sale_pending' : 'active';
-        
         const { data: investment, error: investmentError } = await supabase.from('investments').insert([
             { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: investmentStatus, days_left: durationDays }
         ]).select().single();
@@ -455,20 +453,22 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             return res.status(500).json({ error: 'Purchase failed after payment. Please contact support immediately.' });
         }
         
-        // Send a notification to the admin for pre-sale approval
-        if (isPreSale) {
-            // No notification to user.
-            console.log("--- Pre-Sale Purchase submitted for Admin Approval ---");
-            res.json({ message: 'Pre-sale purchase successfully submitted for approval.' });
-        } else {
-            console.log("--- Purchase Successful ---");
-            res.json({ message: 'Plan purchased successfully!' });
-        }
+        // **FIX 2: Send a detailed admin notification for ALL purchases**
+        await supabase.from('notifications').insert({
+            user_id: 1, // Assuming admin user ID is 1
+            type: 'admin_action_required',
+            // Correctly uses template literals to ensure plan name is available
+            message: `Investment Approval Needed: User ID ${req.user.id} purchased plan "${name}" for ${formatCurrency(price)}.`
+        });
+        
+        console.log("--- Purchase submitted for Admin Approval ---");
+        res.json({ message: 'Purchase successfully submitted for approval.' });
     } catch (error) { 
         console.error("Purchase Plan Error:", error);
         res.status(500).json({ error: 'Failed to purchase plan. Please try again.' }); 
     }
 });
+
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -1986,6 +1986,98 @@ runPushpaGameCycle();
 
 
 // --- ADMIN API ENDPOINTS ---
+
+// **FIX 3: Consolidated endpoint to fetch ALL pending investment approvals**
+app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: pendingRequests, error } = await supabase
+            .from('investments')
+            .select('id, user_id, plan_name, amount, created_at')
+            .or('status.eq.pending_admin_approval,status.eq.pre_sale_pending') // Fetch both
+            .order('created_at', { ascending: true });
+
+        if (error) throw error;
+        res.json({ pendingRequests: pendingRequests || [] });
+    } catch (err) {
+        console.error("Error fetching pending investment requests:", err);
+        res.status(500).json({ error: 'Failed to fetch pending investment requests.' });
+    }
+});
+
+// **FIX 4: Endpoint to approve ANY pending investment (regular or pre-sale)**
+app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) => {
+    const { id } = req.body;
+    try {
+        const { data: investment, error: fetchError } = await supabase
+            .from('investments')
+            .select('user_id, plan_name, status')
+            .eq('id', id)
+            .single();
+
+        if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
+
+        // Update the status to 'active'
+        const { error: updateError } = await supabase
+            .from('investments')
+            .update({ status: 'active' })
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+        
+        // Send success notification to user
+        await supabase.from('notifications').insert({
+            user_id: investment.user_id,
+            type: 'investment_approved',
+            message: `Your investment in ${investment.plan_name} has been approved and is now active! Income starts today.`
+        });
+
+        res.json({ message: `Investment in ${investment.plan_name} approved successfully.` });
+    } catch (err) {
+        console.error("Error approving investment request:", err);
+        res.status(500).json({ error: 'Failed to approve investment request.' });
+    }
+});
+
+// **FIX 5: Endpoint to reject ANY pending investment**
+app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) => {
+    const { id } = req.body;
+    try {
+        const { data: investment, error: fetchError } = await supabase
+            .from('investments')
+            .select('user_id, amount, plan_name')
+            .eq('id', id)
+            .single();
+        
+        if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
+
+        // Update the status to 'rejected'
+        const { error: updateError } = await supabase
+            .from('investments')
+            .update({ status: 'rejected' })
+            .eq('id', id);
+
+        if (updateError) throw updateError;
+        
+        // Refund the user
+        await supabase.rpc('increment_user_balance', {
+            p_user_id: investment.user_id,
+            p_amount: investment.amount
+        });
+        
+        // Send rejection notification to the user
+        await supabase.from('notifications').insert({
+            user_id: investment.user_id,
+            type: 'investment_rejected',
+            message: `Your investment in ${investment.plan_name} was rejected and the amount of ${formatCurrency(investment.amount)} has been refunded to your account.`
+        });
+
+        res.json({ message: 'Investment request rejected successfully and user refunded.' });
+    } catch (err) {
+        console.error("Error rejecting investment request:", err);
+        res.status(500).json({ error: 'Failed to reject investment request.' });
+    }
+});
+
 // New endpoints for pre-sale product approvals
 app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
     try {
