@@ -2553,7 +2553,7 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 
-const wss = new WebSocketServer({ noServer: true });
+// const wss = new WebSocketServer({ noServer: true });
 
 
 server.on('upgrade', (request, socket, head) => {
