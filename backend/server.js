@@ -40,11 +40,10 @@ const corsOptions = {
 
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.options('*', cors(corsOptions)); // Handle preflight requests
 
-
-app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'] }));
-app.use(express.json());
+app.use(express.json()); // Keep this line to process JSON bodies
+// Removed the conflicting app.use(cors) call
 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
@@ -2082,10 +2081,25 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 
+// server.listen(PORT, '0.0.0.0', () => {
+//     console.log(`Server running on port ${PORT}`);
+// });
+
+// --- FIXED: WSS is now correctly declared once and made available ---
 const wss = new WebSocketServer({ noServer: true });
 
 
 server.on('upgrade', (request, socket, head) => {
+    const origin = request.headers.origin;
+
+    // --- FIXED: Check if the request origin is allowed for WebSocket connections ---
+    if (origin && !allowedOrigins.includes(origin)) {
+        console.log(`WebSocket connection rejected from unauthorized origin: ${origin}`);
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+    }
+
     if (request.url.startsWith('/')) {
         wss.handleUpgrade(request, socket, head, ws => {
             wss.emit('connection', ws, request);
