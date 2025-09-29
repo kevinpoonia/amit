@@ -8,6 +8,8 @@ const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 
+// --- FIX 1: Declare WSS globally (without 'const' or 'let' in the global scope below) ---
+let wss;
 
 dotenv.config();
 
@@ -1379,7 +1381,13 @@ app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
             .from('pushpa_bets')
             .select('bet_amount')
             .eq('round_id', pushpaGameState.roundId);
-        
+
+
+        if (error || !bets || bets.length === 0) {
+            return 1 + Math.random() * 9;
+        }
+
+
         const totalBetIn = (bets || []).reduce((sum, b) => sum + Number(b.bet_amount), 0);
         const profitTargets = [0, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0];
         const analysis = profitTargets.map(profitMargin => {
@@ -1722,7 +1730,7 @@ app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) =>
         if (error) throw error;
         res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to update status.' });
+        res.status(500).json({ error: 'Failed to update user status.' });
     }
 });
 
@@ -2073,14 +2081,14 @@ async function dailyInvestmentUpdate() {
 }
 
 
-// FIX: This call is redundant and likely causes the double start/restart issue. Removed.
+// FIX: Removed standalone dailyInvestmentUpdate and setInterval to prevent duplicate scheduling.
 // dailyInvestmentUpdate(); 
 // setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
 
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
-    // FIX: Start game loops here, and the daily interval here.
+    // FIX: Start game loops and the daily interval here.
     gameLoop(); 
     runPushpaGameCycle();
     setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
@@ -2091,8 +2099,8 @@ server.listen(PORT, '0.0.0.0', () => {
 // CORRECTED WEBSOCKET SETUP
 // ----------------------------------------------------------------------
 
-// 1. Declare WSS only once.
-const wss = new WebSocketServer({ noServer: true });
+// 1. Initialize WSS instance, using the global 'wss' variable (no 'const' or 'let')
+wss = new WebSocketServer({ noServer: true });
 
 // 2. Attach a SINGLE 'upgrade' listener to the HTTP server
 server.on('upgrade', (request, socket, head) => {
@@ -2197,6 +2205,7 @@ wss.on('connection', ws => {
 
     ws.on('close', () => console.log('Client disconnected'));
 });
+
 
 // FIX: These lines were causing the server to start/restart game loops unnecessarily.
 // gameLoop();
@@ -2564,7 +2573,7 @@ async function dailyInvestmentUpdate() {
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
-    // FIX: Start game loops and the daily interval here, where we know the server is initialized.
+    // FIX: Start game loops and the daily interval here.
     gameLoop(); 
     runPushpaGameCycle();
     setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
@@ -2575,8 +2584,8 @@ server.listen(PORT, '0.0.0.0', () => {
 // CORRECTED WEBSOCKET SETUP
 // ----------------------------------------------------------------------
 
-// 1. Declare WSS only once.
-const wss = new WebSocketServer({ noServer: true });
+// 1. Initialize WSS instance, using the global 'wss' variable (no 'const' or 'let')
+wss = new WebSocketServer({ noServer: true });
 
 // 2. Attach a SINGLE 'upgrade' listener to the HTTP server
 server.on('upgrade', (request, socket, head) => {
