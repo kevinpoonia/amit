@@ -8,8 +8,11 @@ const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 
-// --- FIX 1: Declare WSS globally (without 'const' or 'let' in the global scope below) ---
+// --- FIX 1: Declare WSS and global interval variables upfront
 let wss;
+let aviatorGameLoopInterval;
+let aviatorCountdownInterval;
+
 
 dotenv.config();
 
@@ -45,7 +48,7 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions)); // Handle preflight requests
 
 app.use(express.json()); // Keep this line to process JSON bodies
-// Removed the conflicting app.use(cors) call
+// FIX: Removed the redundant app.use(cors) call below the options block.
 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
@@ -824,8 +827,9 @@ let aviatorMultiplier = 1.00;
 let aviatorRoundId = `aviator-${Date.now()}`;
 let aviatorCountdown = 8;
 let aviatorAdminSettings = { mode: 'auto', profitMargin: 0.10, manualCrashPoint: null };
-let aviatorGameLoopInterval;
-let aviatorCountdownInterval;
+// FIX: Removed internal declarations of aviatorGameLoopInterval and aviatorCountdownInterval
+// let aviatorGameLoopInterval;
+// let aviatorCountdownInterval;
 
 
 const getRealisticCrashPoint = () => {
@@ -1527,8 +1531,8 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
 
 
 app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res) => {
+    const { id } = req.params;
     try {
-        const { id } = req.params;
         const { data: withdrawal, error: fetchError } = await supabase.from('withdrawals').select('*').eq('id', id).single();
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
         if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal is not pending.' });
@@ -1602,6 +1606,127 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
     const { userId, status } = req.body;
     if (!userId || !['active', 'non-active', 'flagged'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid user ID or status provided.' });
+    }
+    try {
+        await supabase.from('users').update({ status }).eq('id', userId);
+        let notificationMessage = '';
+        if (status === 'non-active') {
+            notificationMessage = "Your account has been marked as non-active because of suspicious activity on your account.";
+        } else if (status === 'flagged') {
+            notificationMessage = "Your account has been marked flagged for violating the rules.";
+        }
+        if (notificationMessage) {
+            await supabase.from('notifications').insert({
+                user_id: userId,
+                type: 'status_change',
+                message: notificationMessage
+            });
+        }
+        res.json({ message: `User ${userId}'s status has been updated to ${status}.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update user status.' });
+    }
+});
+
+
+app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
+    const { amount, reason, user_ids } = req.body;
+    if (!amount || amount <= 0 || !reason) { return res.status(400).json({ error: 'Amount and reason are required.' }); }
+    try {
+        let targetUsers = [];
+        if (user_ids && user_ids.length > 0) {
+            targetUsers = user_ids;
+        } else {
+            const { data: allUsers } = await supabase.from('users').select('id');
+            targetUsers = allUsers.map(u => u.id);
+        }
+        const notifications = [];
+        for (const userId of targetUsers) {
+            await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: userId, p_amount: amount });
+            notifications.push({
+                user_id: userId,
+                type: 'bonus',
+                message: `You have received a bonus of ₹${amount.toLocaleString()}! Reason: ${reason}`
+            });
+        }
+        if (notifications.length > 0) {
+            await supabase.from('notifications').insert(notifications);
+        }
+        res.json({ message: `Bonus of ₹${amount} granted to ${targetUsers.length} users.` });
+    } catch (err) {
+        console.error("Grant Bonus Error:", err);
+        res.status(500).json({ error: 'Failed to grant bonus.' });
+    }
+});
+
+
+app.post('/api/admin/create-promotion', authenticateAdmin, async (req, res) => {
+    const { title, message } = req.body;
+    if (!title || !message) {
+        return res.status(400).json({ error: 'Title and message are required for a promotion.' });
+    }
+    try {
+        const { error } = await supabase.from('promotions').insert({ title, message });
+        if (error) throw error;
+        res.json({ message: 'Promotion created successfully and will be visible to all users.' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to create promotion.' });
+    }
+});
+
+
+app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: appState, error: stateError } = await supabase.from('game_state').select('last_income_distribution').single();
+        if (stateError) throw stateError;
+        if (appState.last_income_distribution) {
+            const lastTime = new Date(appState.last_income_distribution).getTime();
+            const now = new Date().getTime();
+            if (now - lastTime < 24 * 60 * 60 * 1000) {
+                return res.status(429).json({ error: 'Income can only be distributed once every 24 hours.' });
+            }
+        }
+        const { data: updatedUsers, error: rpcError } = await supabase.rpc('distribute_income_to_all_active_users');
+        if (rpcError) throw rpcError;
+        await supabase.from('game_state').update({ last_income_distribution: new Date().toISOString() }).eq('id', 1);
+        res.json({ message: `Successfully distributed daily income to ${updatedUsers} users.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to distribute daily income.' });
+    }
+});
+
+
+app.post('/api/admin/distribute-income-custom', authenticateAdmin, async (req, res) => {
+    const { user_ids } = req.body;
+    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
+        return res.status(400).json({ error: 'Please provide a valid array of user IDs.' });
+    }
+    try {
+        const { data: updatedCount, error: rpcError } = await supabase.rpc('distribute_income_to_specific_users', { p_user_ids: user_ids });
+        if (rpcError) throw rpcError;
+        res.json({ message: `Successfully distributed income to ${updatedCount} specified users.` });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to distribute custom income.' });
+    }
+});
+
+
+app.get('/api/admin/income-distribution-status', authenticateAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('game_state').select('last_income_distribution').single();
+        if (error) throw error;
+        res.json({ lastDistribution: data.last_income_distribution });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to get status.' });
+    }
+});
+
+
+app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) => {
+    const { userId, status } = req.body;
+    const validStatuses = ['active', 'non-active', 'flagged'];
+    if (!userId || !status || !validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid user ID or status provided.' });
     }
     try {
@@ -2091,491 +2216,7 @@ server.listen(PORT, '0.0.0.0', () => {
     // FIX: Start game loops and the daily interval here.
     gameLoop(); 
     runPushpaGameCycle();
-    setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
-});
-
-
-// ----------------------------------------------------------------------
-// CORRECTED WEBSOCKET SETUP
-// ----------------------------------------------------------------------
-
-// 1. Initialize WSS instance, using the global 'wss' variable (no 'const' or 'let')
-wss = new WebSocketServer({ noServer: true });
-
-// 2. Attach a SINGLE 'upgrade' listener to the HTTP server
-server.on('upgrade', (request, socket, head) => {
-    const origin = request.headers.origin;
-    
-    // Validate Origin (CORS fix)
-    if (origin && !allowedOrigins.includes(origin)) {
-        console.log(`WebSocket connection rejected from unauthorized origin: ${origin}`);
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        socket.destroy();
-        return;
-    }
-
-    // Use the main WSS instance to handle the upgrade for all WebSocket traffic
-    wss.handleUpgrade(request, socket, head, ws => {
-        wss.emit('connection', ws, request);
-    });
-});
-
-
-// 3. Keep your existing wss.on('connection') logic as is.
-wss.on('connection', ws => {
-    console.log('Client connected to WebSocket');
-    ws.on('message', async (message) => {
-        try {
-            const data = JSON.parse(message.toString());
-            if (data.game === 'color-prediction' && data.action === 'bet') {
-                const { amount, bet_on, token } = data.payload;
-                if (!token) {
-                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Authentication required.' }));
-                    return;
-                }
-                const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user || !user.id) {
-                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Invalid authentication token.' }));
-                    return;
-                }
-
-                const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
-                const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
-                
-                if (timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
-                    const { error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: user.id, p_amount: amount });
-                    if (betError) {
-                        ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Insufficient balance.' }));
-                        return;
-                    }
-                    
-                    await supabase.from('bets').insert([{ user_id: user.id, game_period: gameState.current_period, amount, bet_on }]);
-                    ws.send(JSON.stringify({ type: 'BET_SUCCESS', message: 'Bet placed!' }));
-                } else {
-                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
-                }
-            }
-            if (data.game === 'pushpa') {
-                const { token } = data.payload;
-                if (!token) return;
-                const user = jwt.verify(token, process.env.JWT_SECRET);
-                if (!user && !user.id) return;
-
-                if (data.action === 'bet') {
-                    if (pushpaGameState.status !== 'waiting') {
-                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
-                    }
-                    const { betAmount, roundId } = data.payload;
-                    const { error } = await supabase.rpc('place_pushpa_bet', {
-                        p_user_id: user.id,
-                        p_round_id: roundId,
-                        p_bet_amount: betAmount
-                    });
-
-                    if (error) {
-                        console.error("Pushpa bet error:", error);
-                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
-                    }
-
-                    ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
-                }
-
-                if (data.action === 'cashout') {
-                    if (pushpaGameState.status !== 'running') return;
-                    const { roundId } = data.payload;
-                    const { data: result, error } = await supabase.rpc('cashout_pushpa_bet', {
-                        p_user_id: user.id,
-                        p_round_id: roundId,
-                        p_cashout_multiplier: pushpaGameState.multiplier
-                    });
-                    if (error || !result || !result.success) {
-                        console.error("Pushpa cashout error:", error);
-                        return;
-                    }
-                    ws.send(JSON.stringify({ type: 'PUSHPA_CASHOUT_SUCCESS', payout: result.payout }));
-                }
-            }
-
-
-        } catch (e) {
-            console.error('Failed to process WebSocket message:', e);
-        }
-    });
-
-
-    ws.on('close', () => console.log('Client disconnected'));
-});
-
-
-// FIX: These lines were causing the server to start/restart game loops unnecessarily.
-// gameLoop();
-// runPushpaGameCycle();
-
-
-// --- ADMIN API ENDPOINTS ---
-
-
-// **FIX 3: Consolidated endpoint to fetch ALL pending investment approvals**
-app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: pendingRequests, error } = await supabase
-            .from('investments')
-            .select('id, user_id, plan_name, amount, created_at')
-            .or('status.eq.pending_admin_approval,status.eq.pre_sale_pending') // Fetch both
-            .order('created_at', { ascending: true });
-
-
-        if (error) throw error;
-        res.json({ pendingRequests: pendingRequests || [] });
-    } catch (err) {
-        console.error("Error fetching pending investment requests:", err);
-        res.status(500).json({ error: 'Failed to fetch pending investment requests.' });
-    }
-});
-
-
-// **FIX 4: Endpoint to approve ANY pending investment (regular or pre-sale)**
-app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) => {
-    const { id } = req.body;
-    try {
-        const { data: investment, error: fetchError } = await supabase
-            .from('investments')
-            .select('user_id, plan_name, status')
-            .eq('id', id)
-            .single();
-
-
-        if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
-
-
-        // Update the status to 'active'
-        const { error: updateError } = await supabase
-            .from('investments')
-            .update({ status: 'active' })
-            .eq('id', id);
-
-
-        if (updateError) throw updateError;
-        
-        // Send success notification to user
-        await supabase.from('notifications').insert({
-            user_id: investment.user_id,
-            type: 'investment_approved',
-            message: `Your investment in ${investment.plan_name} has been approved and is now active! Income starts today.`
-        });
-
-
-        res.json({ message: `Investment in ${investment.plan_name} approved successfully.` });
-    } catch (err) {
-        console.error("Error approving investment request:", err);
-        res.status(500).json({ error: 'Failed to approve investment request.' });
-    }
-});
-
-
-// **FIX 5: Endpoint to reject ANY pending investment**
-app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) => {
-    const { id } = req.body;
-    try {
-        const { data: investment, error: fetchError } = await supabase
-            .from('investments')
-            .select('user_id, amount, plan_name')
-            .eq('id', id)
-            .single();
-        
-        if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
-
-
-        // Update the status to 'rejected'
-        const { error: updateError } = await supabase
-            .from('investments')
-            .update({ status: 'rejected' })
-            .eq('id', id);
-
-
-        if (updateError) throw updateError;
-        
-        // Refund the user
-        await supabase.rpc('increment_user_balance', {
-            p_user_id: investment.user_id,
-            p_amount: investment.amount
-        });
-        
-        // Send rejection notification to the user
-        await supabase.from('notifications').insert({
-            user_id: investment.user_id,
-            type: 'investment_rejected',
-            message: `Your investment in ${investment.plan_name} was rejected and the amount of ${formatCurrency(investment.amount)} has been refunded to your account.`
-        });
-
-
-        res.json({ message: 'Investment request rejected successfully and user refunded.' });
-    } catch (err) {
-        console.error("Error rejecting investment request:", err);
-        res.status(500).json({ error: 'Failed to reject investment request.' });
-    }
-});
-
-
-// New endpoints for pre-sale product approvals
-app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: preSaleRequests, error } = await supabase
-            .from('investments')
-            .select('id, user_id, plan_name, created_at')
-            .eq('status', 'pre_sale_pending')
-            .order('created_at', { ascending: true });
-
-
-        if (error) throw error;
-        res.json({ preSaleRequests: preSaleRequests || [] });
-    } catch (err) {
-        console.error("Error fetching pending pre-sale requests:", err);
-        res.status(500).json({ error: 'Failed to fetch pending pre-sale requests.' });
-    }
-});
-
-
-app.post('/api/admin/pre-sale/approve', authenticateAdmin, async (req, res) => {
-    const { id } = req.body;
-    try {
-        // Fetch the pre-sale request to get user_id and amount
-        const { data: investment, error: fetchError } = await supabase
-            .from('investments')
-            .select('user_id, plan_name')
-            .eq('id', id)
-            .single();
-
-
-        if (fetchError || !investment) {
-            return res.status(404).json({ error: 'Pre-sale request not found.' });
-        }
-
-
-        // Update the status to 'active'
-        const { error: updateError } = await supabase
-            .from('investments')
-            .update({ status: 'active' })
-            .eq('id', id);
-
-
-        if (updateError) throw updateError;
-        
-        // Send a notification to the user
-        await supabase.from('notifications').insert({
-            user_id: investment.user_id,
-            type: 'pre_sale_approved',
-            message: `Your pre-sale investment in ${investment.plan_name} has been approved and is now active!`
-        });
-
-
-        res.json({ message: 'Pre-sale request approved successfully.' });
-    } catch (err) {
-        console.error("Error approving pre-sale request:", err);
-        res.status(500).json({ error: 'Failed to approve pre-sale request.' });
-    }
-});
-
-
-app.post('/api/admin/pre-sale/reject', authenticateAdmin, async (req, res) => {
-    const { id } = req.body;
-    try {
-        // Fetch the pre-sale request to get user_id and amount
-        const { data: investment, error: fetchError } = await supabase
-            .from('investments')
-            .select('user_id, amount, plan_name')
-            .eq('id', id)
-            .single();
-        
-        if (fetchError || !investment) {
-            return res.status(404).json({ error: 'Pre-sale request not found.' });
-        }
-
-
-        // Update the status to 'rejected'
-        const { error: updateError } = await supabase
-            .from('investments')
-            .update({ status: 'rejected' })
-            .eq('id', id);
-
-
-        if (updateError) throw updateError;
-        
-        // Refund the user
-        const { error: refundError } = await supabase.rpc('increment_user_balance', {
-            p_user_id: investment.user_id,
-            p_amount: investment.amount
-        });
-        
-        if (refundError) {
-            console.error("CRITICAL: Failed to refund user after pre-sale rejection:", refundError);
-            return res.status(500).json({ error: 'Pre-sale request rejected, but refund failed. Contact support.' });
-        }
-        
-        // Send a notification to the user
-        await supabase.from('notifications').insert({
-            user_id: investment.user_id,
-            type: 'pre_sale_rejected',
-            message: `Your pre-sale investment in ${investment.plan_name} was rejected. The amount of ₹${investment.amount} has been refunded to your account.`
-        });
-
-
-        res.json({ message: 'Pre-sale request rejected successfully, and user has been refunded.' });
-    } catch (err) {
-        console.error("Error rejecting pre-sale request:", err);
-        res.status(500).json({ error: 'Failed to reject pre-sale request.' });
-    }
-});
-
-
-app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    try {
-        const { data, error } = await supabase.from('game_state').select('*').single();
-        if (error) throw error;
-        res.json({ status: data });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to fetch game status.' });
-    }
-});
-
-
-app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
-    const { is_on, mode, payout_priority } = req.body;
-    const updateData = {};
-    if (typeof is_on === 'boolean') updateData.is_on = is_on;
-    if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
-    if (['users', 'admin'].includes(payout_priority)) updateData.payout_priority = payout_priority;
-    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
-    try {
-        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single();
-        if (error) throw error;
-        res.json({ message: 'Game status updated.', status: data });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to update game status.' });
-    }
-});
-
-
-app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
-    try {
-        await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1);
-        res.json({ message: 'Next result set.' });
-    } catch(err) {
-        res.status(500).json({ error: 'Failed to set next result.' });
-    }
-});
-
-
-app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
-        if (gsError) throw gsError;
-        const current_period = gameState.current_period;
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
-        const today_start_period = Number(yyyymmdd + "0001");
-        const [
-            { data: totalStats, error: totalErr },
-            { data: todayStats, error: todayErr },
-            { data: currentStats, error: currentErr }
-        ] = await Promise.all([
-            supabase.from('bets').select('amount, payout'),
-            supabase.from('bets').select('amount, payout').gte('game_period', today_start_period),
-            supabase.from('bets').select('amount, payout').eq('game_period', current_period)
-        ]);
-        if (totalErr || todayErr || currentErr) throw totalErr || todayErr || currentErr;
-        const calculatePL = (records) => {
-            if (!records) return { totalIn: 0, totalOut: 0, pl: 0 };
-            const totalIn = records.reduce((sum, r) => sum + (r.amount || 0), 0);
-            const totalOut = records.reduce((sum, r) => sum + (r.payout || 0), 0);
-            return { totalIn, totalOut, pl: totalIn - totalOut };
-        };
-        res.json({
-            total: calculatePL(totalStats),
-            today: calculatePL(todayStats),
-            currentPeriod: calculatePL(currentStats)
-        });
-    } catch (error) {
-        console.error("Error fetching game statistics:", error);
-        res.status(500).json({ error: 'Failed to fetch game statistics.' });
-    }
-});
-
-
-app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
-        if (gsError) throw gsError;
-        const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
-        if (betsError) throw betsError;
-        const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
-        bets.forEach(bet => {
-            if (summary.hasOwnProperty(bet.bet_on)) {
-                summary[bet.bet_on] += parseFloat(bet.amount);
-            }
-        });
-        res.json({ summary });
-    } catch (err) {
-        console.error("Error fetching current bets:", err);
-        res.status(500).json({ error: 'Failed to fetch current bets.' });
-    }
-});
-
-
-app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) => {
-    try {
-        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
-        if (gsError) throw gsError;
-        const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
-        if (betsError) throw betsError;
-        const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
-        const outcomes = Array.from({ length: 10 }, (_, i) => {
-            const winningColors = getNumberProperties(i);
-            let totalPayout = 0;
-            bets.forEach(bet => {
-                let multiplier = 0;
-                if (bet.bet_on == i.toString()) multiplier = 9.2;
-                else if (winningColors.includes(bet.bet_on)) multiplier = bet.bet_on === 'Violet' ? 4.5 : 1.98;
-                totalPayout += parseFloat(bet.amount) * multiplier;
-            });
-            return { number: i, pl: totalBetIn - totalPayout };
-        });
-        outcomes.sort((a, b) => b.pl - a.pl);
-        const analysis = {
-            mostProfitable: outcomes.slice(0, 3),
-            leastProfitable: outcomes.slice(-3).reverse()
-        };
-        res.json(analysis);
-    } catch (err) {
-        console.error("Error analyzing game outcomes:", err);
-        res.status(500).json({ error: 'Failed to analyze outcomes.' });
-    }
-});
-
-
-async function dailyInvestmentUpdate() {
-    console.log('Running daily investment update...');
-    try {
-        const { data, error } = await supabase.rpc('update_daily_investments');
-        if (error) throw error;
-        console.log(`Daily investment update complete. ${data} investments processed.`);
-    } catch (error) {
-        console.error('Error running daily investment update:', error);
-    }
-}
-
-
-// FIX: Removed standalone dailyInvestmentUpdate and setInterval to prevent duplicate scheduling.
-// dailyInvestmentUpdate(); 
-// setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
-
-
-server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-    // FIX: Start game loops and the daily interval here.
-    gameLoop(); 
-    runPushpaGameCycle();
+    runAviatorCycle(); // FIX: Call runAviatorCycle here instead of outside.
     setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
 });
 
