@@ -2081,18 +2081,19 @@ server.listen(PORT, '0.0.0.0', () => {
 });
 
 
-// server.listen(PORT, '0.0.0.0', () => {
-//     console.log(`Server running on port ${PORT}`);
-// });
+// ----------------------------------------------------------------------
+// CORRECTED WEBSOCKET SETUP
+// ----------------------------------------------------------------------
 
-// --- FIXED: WSS is now correctly declared once and made available ---
+// 1. Declare WSS only once. It looks like you might have commented this out
+// or had a duplicate somewhere, which would cause a failure if WSS wasn't defined.
 const wss = new WebSocketServer({ noServer: true });
 
-
+// 2. Attach a SINGLE 'upgrade' listener to the HTTP server
 server.on('upgrade', (request, socket, head) => {
     const origin = request.headers.origin;
-
-    // --- FIXED: Check if the request origin is allowed for WebSocket connections ---
+    
+    // Validate Origin (CORS fix from last step)
     if (origin && !allowedOrigins.includes(origin)) {
         console.log(`WebSocket connection rejected from unauthorized origin: ${origin}`);
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -2100,16 +2101,15 @@ server.on('upgrade', (request, socket, head) => {
         return;
     }
 
-    if (request.url.startsWith('/')) {
-        wss.handleUpgrade(request, socket, head, ws => {
-            wss.emit('connection', ws, request);
-        });
-    } else {
-        socket.destroy();
-    }
+    // Use the main WSS instance to handle the upgrade for all WebSocket traffic
+    // The request.url startsWith('/') check should be inside the handler for simplicity.
+    wss.handleUpgrade(request, socket, head, ws => {
+        wss.emit('connection', ws, request);
+    });
 });
 
 
+// 3. Keep your existing wss.on('connection') logic as is.
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
     ws.on('message', async (message) => {
@@ -2126,7 +2126,6 @@ wss.on('connection', ws => {
                     ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Invalid authentication token.' }));
                     return;
                 }
-
 
                 const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
                 const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
@@ -2150,7 +2149,6 @@ wss.on('connection', ws => {
                 const user = jwt.verify(token, process.env.JWT_SECRET);
                 if (!user && !user.id) return;
 
-
                 if (data.action === 'bet') {
                     if (pushpaGameState.status !== 'waiting') {
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
@@ -2162,16 +2160,13 @@ wss.on('connection', ws => {
                         p_bet_amount: betAmount
                     });
 
-
                     if (error) {
                         console.error("Pushpa bet error:", error);
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
                     }
 
-
                     ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
                 }
-
 
                 if (data.action === 'cashout') {
                     if (pushpaGameState.status !== 'running') return;
