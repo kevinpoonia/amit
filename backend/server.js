@@ -8,16 +8,22 @@ const multer = require('multer');
 const { WebSocketServer } = require('ws');
 const http = require('http');
 
+
 dotenv.config();
+
 
 const app = express();
 const server = http.createServer(app);
 
+
 const PORT = process.env.PORT || 10000;
+
 
 console.log(`Attempting to start server on port: ${PORT}`);
 
+
 const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'];
+
 
 const corsOptions = {
     origin: (origin, callback) => {
@@ -32,14 +38,17 @@ const corsOptions = {
     optionsSuccessStatus: 204,
 };
 
+
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
 
 app.use(cors({ origin: ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'] }));
 app.use(express.json());
 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_API_KEY);
+
 
 const formatCurrency = (amount) => {
     if (typeof amount !== 'number') amount = 0;
@@ -50,6 +59,7 @@ const formatCurrency = (amount) => {
     }).format(amount);
 };
 
+
 cron.schedule('0 0 * * *', async () => {
     console.log('Running daily cron job: Updating investments and distributing income...');
     try {
@@ -58,7 +68,9 @@ cron.schedule('0 0 * * *', async () => {
             .select('id, days_left, user_id, plan_id')
             .eq('status', 'active');
 
+
         if (fetchError) throw fetchError;
+
 
         const incomeDistribution = {};
         for (const investment of activeInvestments) {
@@ -93,6 +105,7 @@ cron.schedule('0 0 * * *', async () => {
     }
 });
 
+
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -103,6 +116,7 @@ const authenticateToken = (req, res, next) => {
         next();
     });
 };
+
 
 const authenticateAdmin = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -121,11 +135,13 @@ const authenticateAdmin = async (req, res, next) => {
     }
 };
 
+
 const generateIpUsername = (username) => {
     let namePart = username.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6);
     if (namePart.length < 6) namePart = namePart.padEnd(6, '123');
     return `${namePart}@${username.length}`;
 };
+
 
 const getNumberProperties = (num) => {
     const colors = [];
@@ -138,6 +154,7 @@ const getNumberProperties = (num) => {
     return colors;
 };
 
+
 function getLotteryRoundId() {
     const now = new Date();
     const year = now.getFullYear();
@@ -146,6 +163,7 @@ function getLotteryRoundId() {
     const hour = String(now.getHours()).padStart(2, '0');
     return `${year}${month}${day}-${hour}`;
 };
+
 
 function generatePeriodId() {
     const now = new Date();
@@ -160,6 +178,7 @@ function generatePeriodId() {
     return Number(`${yyyymmdd}${minutePart}`);
 }
 
+
 app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
     const { suggestion } = req.body;
     if (!suggestion || suggestion.trim() === '') {
@@ -169,7 +188,7 @@ app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
         const { error } = await supabase.from('suggestions').insert([
             { 
                 user_id: req.user.id,
-                suggestion_text: suggestion.trim() 
+                suggestion_text: suggestion.trim()
             }
         ]);
         if (error) throw error;
@@ -179,6 +198,7 @@ app.post('/api/submit-suggestion', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to submit suggestion.' });
     }
 });
+
 
 app.post('/api/register', async (req, res) => {
     const { username, mobile, password, referralCode } = req.body;
@@ -192,12 +212,14 @@ app.post('/api/register', async (req, res) => {
             .eq('mobile', mobile)
             .single();
 
+
         if (existingUser) {
             return res.status(400).json({ error: 'A user with this mobile number already exists.' });
         }
         if (existingUserError && existingUserError.code !== 'PGRST116') {
             throw existingUserError;
         }
+
 
         let referredById = null;
         if (referralCode) {
@@ -206,6 +228,7 @@ app.post('/api/register', async (req, res) => {
                 referredById = referrer.id;
             }
         }
+
 
         const { data: newUser, error } = await supabase.from('users').insert([{
             name: username,
@@ -216,10 +239,12 @@ app.post('/api/register', async (req, res) => {
             email: `${mobile}@moneyplus.com`
         }]).select().single();
 
+
         if (error) throw error;
         
         const ipUsername = `${username.replace(/[^a-zA-Z0-9]/g, '').slice(0, 5)}_${newUser.id}`;
         await supabase.from('users').update({ ip_username: ipUsername }).eq('id', newUser.id);
+
 
         const token = jwt.sign({ id: newUser.id, name: newUser.name, is_admin: newUser.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         
@@ -252,6 +277,7 @@ app.post('/api/login', async (req, res) => {
             message: 'Welcome back! Ready to earn more and make your money work for you?'
         });
 
+
         const token = jwt.sign({ id: user.id, name: user.name, is_admin: user.is_admin }, process.env.JWT_SECRET, { expiresIn: '24h' });
         res.json({ message: 'Login successful', token });
     } catch (error) {
@@ -259,6 +285,7 @@ app.post('/api/login', async (req, res) => {
         res.status(500).json({ error: 'Server error during login' });
     }
 });
+
 
 app.get('/api/data', authenticateToken, async (req, res) => {
     try {
@@ -305,6 +332,7 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/notifications/read', authenticateToken, async (req, res) => {
     const { ids } = req.body;
     if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -324,6 +352,7 @@ app.post('/api/notifications/read', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/notifications/delete-read', authenticateToken, async (req, res) => {
     try {
         const { error } = await supabase
@@ -332,12 +361,14 @@ app.post('/api/notifications/delete-read', authenticateToken, async (req, res) =
             .eq('user_id', req.user.id)
             .eq('is_read', true);
 
+
         if (error) throw error;
         res.json({ message: 'Read notifications deleted.' });
     } catch (error) {
         res.status(500).json({ error: 'Failed to delete read notifications.' });
     }
 });
+
 
 app.get('/api/deposit-info', authenticateToken, async (req, res) => {
     try {
@@ -355,6 +386,7 @@ app.get('/api/deposit-info', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/recharge', authenticateToken, async (req, res) => {
     const { amount, utr, screenshotUrl } = req.body;
     if (!amount || amount <= 0 || !utr || utr.trim() === '') { 
@@ -371,6 +403,7 @@ app.post('/api/recharge', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to submit recharge request.' });
     }
 });
+
 
 app.post('/api/withdraw', authenticateToken, async (req, res) => {
     const { amount, method, details } = req.body;
@@ -397,6 +430,7 @@ app.get('/api/product-plans', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     console.log("\n--- Received Purchase Request ---");
     try {
@@ -404,13 +438,16 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         console.log("Payload received:", { id, price, name });
         console.log(`Attempting purchase for user ID: ${req.user.id}`);
 
+
         const { data: currentUser, error: userFetchError } = await supabase
             .from('users')
             .select('balance, withdrawable_wallet, status')
             .eq('id', req.user.id)
             .single();
 
+
         if (userFetchError) throw userFetchError;
+
 
         const dbBalance = Number(currentUser.balance) || 0;
         const dbWithdrawable = Number(currentUser.withdrawable_wallet) || 0;
@@ -418,6 +455,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
         
         console.log(`Database Balance: ${dbBalance}, Withdrawable: ${dbWithdrawable}, Total: ${dbTotal}`);
         console.log(`Comparing DB Total (${dbTotal}) with Plan Price (${price})`);
+
 
         if (['flagged', 'non-active'].includes(currentUser.status)) {
             return res.status(403).json({ error: 'You are not authorised to do this action. Please contact support.' });
@@ -432,15 +470,18 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
             p_amount: price 
         });
 
+
         if (rpcError || !deductionSuccess) {
             console.error("Deduction failed. RPC Error:", rpcError);
             console.log("Result from DB function (deductionSuccess):", deductionSuccess);
             return res.status(400).json({ error: 'Insufficient total balance.' });
         }
 
+
         const { data: investment, error: investmentError } = await supabase.from('investments').insert([
             { user_id: req.user.id, plan_id: id, plan_name: name, amount: price, status: investmentStatus, days_left: durationDays }
         ]).select().single();
+
 
         await supabase.rpc('increment_task_progress', {
             p_user_id: req.user.id,
@@ -469,6 +510,7 @@ app.post('/api/purchase-plan', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.get('/api/investments', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -488,6 +530,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
             .eq('user_id', req.user.id)
             .order('created_at', { ascending: false });
 
+
         if (error) throw error;
         
         const formattedData = data.map(inv => ({
@@ -495,6 +538,7 @@ app.get('/api/investments', authenticateToken, async (req, res) => {
             plan_name: inv.product_plans ? inv.product_plans.name : 'Unknown Plan',
             daily_income: inv.product_plans ? inv.product_plans.daily_income : 0
         }));
+
 
         res.json({ investments: formattedData });
     } catch (error) {
@@ -513,6 +557,7 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
             supabase.from('investments').select('id, amount, plan_name, created_at').eq('user_id', userId),
             supabase.from('daily_claims').select('id, amount, created_at').eq('user_id', userId)
         ]);
+
 
         const formatted = [];
         (recharges || []).forEach(r => formatted.push({ id: `dep-${r.id}`, type: 'Deposit', amount: r.amount, status: r.status, date: r.created_at }));
@@ -539,6 +584,7 @@ app.get('/api/bet-history', authenticateToken, async (req, res) => {
             .order('created_at', { ascending: false })
             .limit(100);
 
+
         if (error) throw error;
         res.json({ history: data || [] });
     } catch (error) {
@@ -557,6 +603,7 @@ app.get('/api/fake-withdrawals', (req, res) => {
     res.json({ withdrawals });
 });
 
+
 app.get('/api/aviator/state', authenticateToken, (req, res) => {
     res.json({ 
         gameState: aviatorGameState, 
@@ -566,6 +613,7 @@ app.get('/api/aviator/state', authenticateToken, (req, res) => {
     });
 });
 
+
 app.post('/api/aviator/bet', authenticateToken, async (req, res) => {
     const { betAmount, roundId } = req.body;
     if (aviatorGameState !== 'waiting') {
@@ -574,10 +622,12 @@ app.post('/api/aviator/bet', authenticateToken, async (req, res) => {
     res.json({ message: 'Bet placed!' });
 });
 
+
 app.post('/api/aviator/cashout', authenticateToken, async (req, res) => {
     const { roundId, currentMultiplier } = req.body;
     res.json({ message: 'Cashed out!', payout: betAmount * currentMultiplier });
 });
+
 
 app.get('/api/aviator/history', authenticateToken, async (req, res) => {
     try {
@@ -589,13 +639,16 @@ app.get('/api/aviator/history', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
     const { betAmount } = req.body;
     const userId = req.user.id;
 
+
     if (!betAmount || betAmount <= 0) {
         return res.status(400).json({ error: 'Invalid bet amount.' });
     }
+
 
     try {
         const { data: user, error: userError } = await supabase
@@ -604,11 +657,14 @@ app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
             .eq('id', userId)
             .single();
 
+
         if (userError) throw userError;
+
 
         if (user.balance < betAmount) {
             return res.status(400).json({ error: 'Insufficient balance.' });
         }
+
 
         const newBalance = user.balance - betAmount;
         await supabase
@@ -616,17 +672,21 @@ app.post('/api/pushpa-raj/place-bet', authenticateToken, async (req, res) => {
             .update({ balance: newBalance })
             .eq('id', userId);
 
+
         await supabase
             .from('bets')
             .insert([{ user_id: userId, game_name: 'PushpaRaj', bet_amount: betAmount, status: 'pending' }]);
 
+
         res.status(200).json({ success: true, message: `Bet of ₹${betAmount} placed successfully.` });
+
 
     } catch (error) {
         console.error("Error placing bet:", error);
         res.status(500).json({ error: 'Failed to place bet. Please try again.' });
     }
 });
+
 
 let pushpaGameState = {
     status: 'waiting',
@@ -640,11 +700,19 @@ let pushpaGameState = {
 };
 let pushpaGameLoopInterval;
 
+
 let pushpaAdminSettings = {
     profitMode: 'admin_profit',
     controlMode: 'auto',
     manualCrashPoint: null
 };
+
+// --- NEW GLOBAL STATE FOR BLACKJACK ADMIN CONTROLS ---
+let blackjackAdminSettings = {
+    luckFactor: 0, // Range -100 (Dealer bias) to 100 (Player bias). 0 is fair odds.
+    isManualShuffle: false, // Flag for manual control over deck creation
+};
+// ---------------------------------------------------
 
 
 const broadcast = (message) => {
@@ -655,19 +723,23 @@ const broadcast = (message) => {
     });
 };
 
+
 const calculatePushpaCrashPoint = async (roundId) => {
     if (pushpaAdminSettings.controlMode === 'admin' && pushpaAdminSettings.manualCrashPoint) {
         return pushpaAdminSettings.manualCrashPoint;
     }
+
 
     const { data: bets, error } = await supabase
         .from('pushpa_bets')
         .select('bet_amount')
         .eq('round_id', roundId);
 
+
     if (error || !bets || bets.length === 0) {
         return 1 + Math.random() * 9;
     }
+
 
     const totalBetIn = bets.reduce((sum, bet) => sum + Number(bet.bet_amount), 0);
     switch (pushpaAdminSettings.profitMode) {
@@ -680,6 +752,7 @@ const calculatePushpaCrashPoint = async (roundId) => {
             return 1.0 + Math.random() * 1.5;
     }
 };
+
 
 const runPushpaGameCycle = async () => {
     clearInterval(pushpaGameLoopInterval);
@@ -696,6 +769,7 @@ const runPushpaGameCycle = async () => {
         if (error) console.error("Error saving Pushpa round:", error);
     });
 
+
     pushpaGameLoopInterval = setInterval(async () => {
         const elapsedTime = (Date.now() - pushpaGameState.startTime) / 1000;
         pushpaGameState.multiplier = parseFloat((1 + elapsedTime * 0.2 + Math.pow(elapsedTime, 2) * 0.01).toFixed(2));
@@ -710,7 +784,9 @@ const runPushpaGameCycle = async () => {
                 .eq('round_id', pushpaGameState.roundId)
                 .eq('status', 'pending');
 
+
             broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
+
 
             setTimeout(() => {
                 pushpaGameState.prevStatus = pushpaGameState.status;
@@ -719,6 +795,7 @@ const runPushpaGameCycle = async () => {
                 pushpaGameState.multiplier = 1.00;
                 pushpaGameState.startTime = Date.now();
                 pushpaAdminSettings.manualCrashPoint = null;
+
 
                 const countdownInterval = setInterval(() => {
                     const elapsed = Date.now() - pushpaGameState.startTime;
@@ -736,6 +813,8 @@ const runPushpaGameCycle = async () => {
                 broadcast({ type: 'PUSHPA_STATE_UPDATE', payload: pushpaGameState });
         }
     }, 100);
+
+
 };
 
 
@@ -747,6 +826,7 @@ let aviatorAdminSettings = { mode: 'auto', profitMargin: 0.10, manualCrashPoint:
 let aviatorGameLoopInterval;
 let aviatorCountdownInterval;
 
+
 const getRealisticCrashPoint = () => {
     const r = Math.random();
     if (r < 0.90) {
@@ -757,6 +837,7 @@ const getRealisticCrashPoint = () => {
         return 30 + Math.random() * 70;
     }
 };
+
 
 const runAviatorCycle = async () => {
     clearInterval(aviatorCountdownInterval);
@@ -803,6 +884,7 @@ const runAviatorCycle = async () => {
     }, 100);
 };
 
+
 runAviatorCycle();
 
 
@@ -810,12 +892,15 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
     const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
     if (error) throw error;
 
+
     if (bets.length === 0) {
         return { a: Math.floor(Math.random() * 10), b: Math.floor(Math.random() * 10) };
     }
 
+
     const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.bet_amount), 0);
     let bestOutcome = { a: -1, b: -1, netResult: -Infinity };
+
 
     for (let a = 0; a <= 9; a++) {
         for (let b = a; b <= 9; b++) {
@@ -824,12 +909,14 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
                 const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
                 const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
 
+
                 if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) {
                     currentPayout += bet.bet_amount * 25;
                 } else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) {
                     currentPayout += bet.bet_amount * 2.5;
                 }
             });
+
 
             const netResult = totalBetIn - currentPayout;
             if (netResult > bestOutcome.netResult) {
@@ -858,8 +945,10 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
         return { a: zeroProfitOutcome.a, b: zeroProfitOutcome.b };
     }
 
+
     return { a: bestOutcome.a, b: bestOutcome.b };
 };
+
 
 const processLotteryRound = async (roundId) => {
     console.log(`Processing lottery for round: ${roundId}`);
@@ -897,6 +986,7 @@ const processLotteryRound = async (roundId) => {
     console.log(`Round ${roundId} processed. Winning numbers: ${result.a}, ${result.b}.`);
 };
 
+
 cron.schedule('0 * * * *', () => {
     const roundId = getLotteryRoundId();
     processLotteryRound(roundId);
@@ -914,6 +1004,7 @@ app.get('/api/game-state', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch initial game history.' });
     }
 });
+
 
 app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     const { period } = req.params;
@@ -938,15 +1029,18 @@ app.get('/api/my-bet-result/:period', authenticateToken, async (req, res) => {
     }
 });
 
+
 let gameTimer;
 const GAME_DURATION_SECONDS = 60;
 const BETTING_WINDOW_SECONDS = 50;
+
 
 async function processRoundResults(period) {
     console.log(`[processRoundResults] Starting for period: ${period}`);
     try {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('*').single();
         if (gsError) throw gsError;
+
 
         const { data: bets, error: betsError } = await supabase.from('bets').select('*').eq('game_period', period);
         if (betsError) throw betsError;
@@ -975,9 +1069,11 @@ async function processRoundResults(period) {
         await supabase.from('game_results').insert({ game_period: period, result_number: winningNumber });
         console.log(`[processRoundResults] Winning number for period ${period} is ${winningNumber}.`);
 
+
         const { data: updatedResults } = await supabase.from('game_results').select('*').order('created_at', { ascending: false }).limit(20);
         broadcast({ type: 'ROUND_RESULT', results: updatedResults || [] });
         console.log(`[processRoundResults] ROUND_RESULT message broadcasted.`);
+
 
         if (bets && bets.length > 0) {
             console.log(`[processRoundResults] Processing payouts...`);
@@ -991,7 +1087,7 @@ async function processRoundResults(period) {
                     if (winningColors.includes(bet.bet_on)) payout += parseFloat(bet.amount) * (bet.bet_on === 'Violet' ? 4.5 : 1.98);
                 }
                 if (payout > 0) {
-                    await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user_id, p_amount: payout });
+                    await supabase.rpc('increment_user_withdrawable_wallet', { p_user_id: bet.user.id, p_amount: payout });
                 }
                 await supabase.from('bets').update({ status, payout }).eq('id', bet.id);
             }
@@ -1002,13 +1098,16 @@ async function processRoundResults(period) {
     }
 }
 
+
 async function gameLoop() {
     console.log("--- [gameLoop] Starting new cycle ---");
     if (gameTimer) clearInterval(gameTimer);
 
+
     try {
         const { data: gs, error: gsError } = await supabase.from('game_state').select('current_period').eq('id', 1).single();
         let previousPeriod;
+
 
         if (gsError || !gs) {
             console.log("[gameLoop] Initializing game state...");
@@ -1020,6 +1119,7 @@ async function gameLoop() {
         }
         
         processRoundResults(previousPeriod);
+
 
         const nextPeriod = generatePeriodId();
         await supabase.from('game_state').update({ current_period: nextPeriod, next_result: null, countdown_start_time: new Date().toISOString() }).eq('id', 1);
@@ -1050,6 +1150,7 @@ app.get('/api/data', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
     const { taskId } = req.body;
     try {
@@ -1058,7 +1159,9 @@ app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
             p_task_id: taskId
         });
 
+
         if (error) throw error;
+
 
         if (data.success) {
             res.json({ message: data.message });
@@ -1070,6 +1173,8 @@ app.post('/api/tasks/claim', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to claim task reward.' });
     }
 });
+
+
 app.post('/api/suggestions', authenticateToken, async (req, res) => {
     const { suggestion_text } = req.body;
     if (!suggestion_text || suggestion_text.trim() === '') {
@@ -1087,13 +1192,16 @@ app.post('/api/suggestions', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.post('/api/claim-income', authenticateToken, async (req, res) => {
     try {
         const { data: claimedAmount, error } = await supabase.rpc('claim_daily_income', {
             p_user_id: req.user.id
         });
 
+
         if (error) throw error;
+
 
         if (claimedAmount > 0) {
             res.json({ message: `Successfully claimed ${formatCurrency(claimedAmount)}. It has been added to your withdrawable balance.` });
@@ -1106,14 +1214,17 @@ app.post('/api/claim-income', authenticateToken, async (req, res) => {
     }
 });
 
+
 app.get('/api/referral-details', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
         const { data: user, error: userError } = await supabase.from('users').select('ip_username').eq('id', userId).single();
         if (userError) throw userError;
 
+
         const { data: level1Referrals, error: level1Error } = await supabase.from('users').select('id, name').eq('referred_by', userId);
         if (level1Error) throw level1Error;
+
 
         const level1Ids = level1Referrals.map(u => u.id);
         let level2Referrals = [];
@@ -1123,10 +1234,13 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
             level2Referrals = l2Data;
         }
 
+
         const { data: commissions, error: commissionError } = await supabase.from('referral_commissions').select('commission_amount').eq('user_id', userId);
         if (commissionError) throw commissionError;
 
+
         const totalRewards = commissions.reduce((sum, record) => sum + parseFloat(record.commission_amount), 0);
+
 
         res.json({
             referralLink: `https://amit-sigma.vercel.app/?ref=${user.ip_username}`,
@@ -1140,6 +1254,7 @@ app.get('/api/referral-details', authenticateToken, async (req, res) => {
                 users: level2Referrals
             }
         });
+
 
     } catch (error) {
         console.error("Error fetching referral details:", error);
@@ -1165,6 +1280,7 @@ app.get('/api/lottery/live-stats/:roundId', authenticateToken, async (req, res) 
     } catch (e) { res.status(500).json({ error: 'Failed to get live stats.' }); }
 });
 
+
 app.get('/api/lottery/history', authenticateToken, async (req, res) => {
     try {
         const { data, error } = await supabase.from('lottery_results')
@@ -1177,6 +1293,7 @@ app.get('/api/lottery/history', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch history.' }); 
     }
 });
+
 
 app.post('/api/lottery/bet', authenticateToken, async (req, res) => {
     const { roundId, betAmount, selectedNumA, selectedNumB } = req.body;
@@ -1191,6 +1308,7 @@ app.post('/api/lottery/bet', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to place bet.' });
     }
 });
+
 
 app.get('/api/lottery/my-bet-result/:roundId', authenticateToken, async (req, res) => {
     const { roundId } = req.params;
@@ -1214,14 +1332,17 @@ app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => 
         const { data: lotteryBets, error: lotteryErr } = await supabase.from('lottery_bets').select('bet_amount, payout');
         if (lotteryErr) throw lotteryErr;
 
+
         const totalColorBet = colorGameBets.reduce((sum, b) => sum + (b.amount || 0), 0);
         const totalColorPayout = colorGameBets.reduce((sum, b) => sum + (b.payout || 0), 0);
         const totalLotteryBet = lotteryBets.reduce((sum, b) => sum + (b.bet_amount || 0), 0);
         const totalLotteryPayout = lotteryBets.reduce((sum, b) => sum + (b.payout || 0), 0);
 
+
         const totalBet = totalColorBet + totalLotteryBet;
         const totalPayout = totalColorPayout + totalLotteryPayout;
         const totalPL = totalBet - totalPayout;
+
 
         res.json({ totalBet, totalPayout, totalPL });
     } catch (error) {
@@ -1229,10 +1350,12 @@ app.get('/api/admin/overall-game-stats', authenticateAdmin, async (req, res) => 
     }
 });
 
+
 app.post('/api/admin/pushpa-settings', authenticateAdmin, (req, res) => {
     const { profitMode, controlMode, manualCrashPoint } = req.body;
     const validProfitModes = ['admin_profit', 'user_profit', 'user_profit_max'];
     const validControlModes = ['auto', 'admin'];
+
 
     if (profitMode && validProfitModes.includes(profitMode)) {
         pushpaAdminSettings.profitMode = profitMode;
@@ -1248,6 +1371,7 @@ app.post('/api/admin/pushpa-settings', authenticateAdmin, (req, res) => {
     
     res.json({ message: `Pushpa Raj game settings updated.`, settings: pushpaAdminSettings });
 });
+
 
 app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
     try {
@@ -1276,6 +1400,47 @@ app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
     }
 });
 
+
+// --- NEW BLACKJACK ADMIN ENDPOINTS ---
+
+app.get('/api/admin/blackjack-settings', authenticateAdmin, (req, res) => {
+    res.json({ settings: blackjackAdminSettings });
+});
+
+app.post('/api/admin/blackjack-settings', authenticateAdmin, (req, res) => {
+    const { luckFactor, isManualShuffle } = req.body;
+
+    if (luckFactor !== undefined) {
+        const factor = parseInt(luckFactor);
+        if (!isNaN(factor) && factor >= -100 && factor <= 100) {
+            blackjackAdminSettings.luckFactor = factor;
+        } else {
+            return res.status(400).json({ error: 'Luck factor must be an integer between -100 and 100.' });
+        }
+    }
+
+    if (isManualShuffle !== undefined) {
+        if (typeof isManualShuffle === 'boolean') {
+            blackjackAdminSettings.isManualShuffle = isManualShuffle;
+        } else {
+            return res.status(400).json({ error: 'isManualShuffle must be a boolean.' });
+        }
+    }
+
+    res.json({ message: 'Blackjack settings updated.', settings: blackjackAdminSettings });
+});
+
+app.get('/api/admin/blackjack-analysis', authenticateAdmin, (req, res) => {
+    // For a simulated game, analysis just reports current settings.
+    res.json({
+        currentSettings: blackjackAdminSettings,
+        analysisNote: `Luck factor: ${blackjackAdminSettings.luckFactor}%. 0 is standard casino edge. This influences the client-side decision logic for demonstration.`,
+    });
+});
+
+// -------------------------------------
+
+
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase
@@ -1296,6 +1461,7 @@ app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) =>
         res.json({ withdrawals: data });
     } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
 });
+
 
 app.post('/api/admin/recharge/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
@@ -1332,6 +1498,7 @@ app.post('/api/admin/recharge/:id/reject', authenticateAdmin, async (req, res) =
     }
 });
 
+
 app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.params;
     try {
@@ -1350,6 +1517,7 @@ app.post('/api/admin/withdrawal/:id/approve', authenticateAdmin, async (req, res
     }
 });
 
+
 app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res) => {
     try {
         const { id } = req.params;
@@ -1357,12 +1525,14 @@ app.post('/api/admin/withdrawal/:id/reject', authenticateAdmin, async (req, res)
         if (fetchError || !withdrawal) return res.status(404).json({ error: 'Withdrawal not found.' });
         if (withdrawal.status !== 'pending') return res.status(400).json({ error: 'Withdrawal is not pending.' });
 
+
         await supabase.from('withdrawals').update({ status: 'rejected', processed_date: new Date().toISOString() }).eq('id', id);
         res.json({ message: 'Withdrawal rejected successfully.' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reject withdrawal.' });
     }
 });
+
 
 app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
     try {
@@ -1378,6 +1548,7 @@ app.get('/api/admin/income-status', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch income distribution status.' });
     }
 });
+
 
 app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => {
     try {
@@ -1419,6 +1590,7 @@ app.post('/api/admin/distribute-income', authenticateAdmin, async (req, res) => 
     }
 });
 
+
 app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
     const { userId, status } = req.body;
     if (!userId || !['active', 'non-active', 'flagged'].includes(status)) {
@@ -1444,6 +1616,7 @@ app.post('/api/admin/set-user-status', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to update user status.' });
     }
 });
+
 
 app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     const { amount, reason, user_ids } = req.body;
@@ -1475,6 +1648,7 @@ app.post('/api/admin/grant-bonus', authenticateAdmin, async (req, res) => {
     }
 });
 
+
 app.post('/api/admin/create-promotion', authenticateAdmin, async (req, res) => {
     const { title, message } = req.body;
     if (!title || !message) {
@@ -1488,6 +1662,8 @@ app.post('/api/admin/create-promotion', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to create promotion.' });
     }
 });
+
+
 app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, res) => {
     try {
         const { data: appState, error: stateError } = await supabase.from('game_state').select('last_income_distribution').single();
@@ -1508,6 +1684,7 @@ app.post('/api/admin/distribute-daily-income', authenticateAdmin, async (req, re
     }
 });
 
+
 app.post('/api/admin/distribute-income-custom', authenticateAdmin, async (req, res) => {
     const { user_ids } = req.body;
     if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
@@ -1522,6 +1699,7 @@ app.post('/api/admin/distribute-income-custom', authenticateAdmin, async (req, r
     }
 });
 
+
 app.get('/api/admin/income-distribution-status', authenticateAdmin, async (req, res) => {
     try {
         const { data, error } = await supabase.from('game_state').select('last_income_distribution').single();
@@ -1531,6 +1709,7 @@ app.get('/api/admin/income-distribution-status', authenticateAdmin, async (req, 
         res.status(500).json({ error: 'Failed to get status.' });
     }
 });
+
 
 app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) => {
     const { userId, status } = req.body;
@@ -1547,6 +1726,7 @@ app.post('/api/admin/update-user-status', authenticateAdmin, async (req, res) =>
     }
 });
 
+
 app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, res) => {
     const { userId } = req.params;
     try {
@@ -1555,6 +1735,7 @@ app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, 
             .select('name, can_receive_income')
             .eq('id', userId)
             .single();
+
 
         if (error) {
             if (error.code === 'PGRST116') return res.status(404).json({ error: 'User not found.' });
@@ -1565,6 +1746,7 @@ app.get('/api/admin/user-income-status/:userId', authenticateAdmin, async (req, 
         res.status(500).json({ error: "Failed to fetch user's income status." });
     }
 });
+
 
 app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) => {
     const { userId, canReceiveIncome } = req.body;
@@ -1583,6 +1765,7 @@ app.post('/api/admin/manage-user-income', authenticateAdmin, async (req, res) =>
         res.status(500).json({ error: 'Failed to update user income status.' });
     }
 });
+
 
 app.get('/api/admin/platform-stats', authenticateAdmin, async (req, res) => {
     try {
@@ -1621,6 +1804,7 @@ app.get('/api/admin/aviator/live-bets', authenticateAdmin, async (req, res) => {
     }
 });
 
+
 app.post('/api/admin/aviator-settings', authenticateAdmin, (req, res) => {
     const { mode, profitMargin, manualCrashPoint } = req.body;
     if (mode) aviatorAdminSettings.mode = mode;
@@ -1630,6 +1814,7 @@ app.post('/api/admin/aviator-settings', authenticateAdmin, (req, res) => {
     
     res.json({ message: 'Aviator settings updated.', settings: aviatorAdminSettings });
 });
+
 
 app.get('/api/admin/aviator-analysis', authenticateAdmin, async (req, res) => {
     try {
@@ -1731,6 +1916,7 @@ app.get('/api/admin/lottery-analysis/:roundId', authenticateAdmin, async (req, r
     }
 });
 
+
 app.post('/api/admin/lottery-mode', authenticateAdmin, (req, res) => {
     const { mode } = req.body;
     if (['auto', 'admin'].includes(mode)) {
@@ -1740,6 +1926,7 @@ app.post('/api/admin/lottery-mode', authenticateAdmin, (req, res) => {
         res.status(400).json({ error: 'Invalid mode.' });
     }
 });
+
 
 app.post('/api/admin/lottery-set-result', authenticateAdmin, async (req, res) => {
     const { roundId, winning_num_a, winning_num_b } = req.body;
@@ -1758,6 +1945,7 @@ app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     }
 });
 
+
 app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     const { is_on, mode, payout_priority } = req.body;
     const updateData = {};
@@ -1774,6 +1962,7 @@ app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
     }
 });
 
+
 app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
     try {
         await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1);
@@ -1782,6 +1971,7 @@ app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to set next result.' });
     }
 });
+
 
 app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
     try {
@@ -1819,6 +2009,7 @@ app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
     }
 });
 
+
 app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
     try {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
@@ -1837,6 +2028,7 @@ app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch current bets.' });
     }
 });
+
 
 app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) => {
     try {
@@ -1868,6 +2060,7 @@ app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) 
     }
 });
 
+
 async function dailyInvestmentUpdate() {
     console.log('Running daily investment update...');
     try {
@@ -1879,14 +2072,18 @@ async function dailyInvestmentUpdate() {
     }
 }
 
+
 dailyInvestmentUpdate();
 setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
+
 
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 });
 
+
 const wss = new WebSocketServer({ noServer: true });
+
 
 server.on('upgrade', (request, socket, head) => {
     if (request.url.startsWith('/')) {
@@ -1897,6 +2094,7 @@ server.on('upgrade', (request, socket, head) => {
         socket.destroy();
     }
 });
+
 
 wss.on('connection', ws => {
     console.log('Client connected to WebSocket');
@@ -1914,6 +2112,7 @@ wss.on('connection', ws => {
                     ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Invalid authentication token.' }));
                     return;
                 }
+
 
                 const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
                 const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
@@ -1937,6 +2136,7 @@ wss.on('connection', ws => {
                 const user = jwt.verify(token, process.env.JWT_SECRET);
                 if (!user && !user.id) return;
 
+
                 if (data.action === 'bet') {
                     if (pushpaGameState.status !== 'waiting') {
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
@@ -1948,13 +2148,16 @@ wss.on('connection', ws => {
                         p_bet_amount: betAmount
                     });
 
+
                     if (error) {
                         console.error("Pushpa bet error:", error);
                         return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
                     }
 
+
                     ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
                 }
+
 
                 if (data.action === 'cashout') {
                     if (pushpaGameState.status !== 'running') return;
@@ -1972,10 +2175,12 @@ wss.on('connection', ws => {
                 }
             }
 
+
         } catch (e) {
             console.error('Failed to process WebSocket message:', e);
         }
     });
+
 
     ws.on('close', () => console.log('Client disconnected'));
 });
@@ -1987,6 +2192,7 @@ runPushpaGameCycle();
 
 // --- ADMIN API ENDPOINTS ---
 
+
 // **FIX 3: Consolidated endpoint to fetch ALL pending investment approvals**
 app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) => {
     try {
@@ -1996,6 +2202,7 @@ app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) =>
             .or('status.eq.pending_admin_approval,status.eq.pre_sale_pending') // Fetch both
             .order('created_at', { ascending: true });
 
+
         if (error) throw error;
         res.json({ pendingRequests: pendingRequests || [] });
     } catch (err) {
@@ -2003,6 +2210,7 @@ app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) =>
         res.status(500).json({ error: 'Failed to fetch pending investment requests.' });
     }
 });
+
 
 // **FIX 4: Endpoint to approve ANY pending investment (regular or pre-sale)**
 app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) => {
@@ -2014,13 +2222,16 @@ app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) =
             .eq('id', id)
             .single();
 
+
         if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
+
 
         // Update the status to 'active'
         const { error: updateError } = await supabase
             .from('investments')
             .update({ status: 'active' })
             .eq('id', id);
+
 
         if (updateError) throw updateError;
         
@@ -2031,12 +2242,14 @@ app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) =
             message: `Your investment in ${investment.plan_name} has been approved and is now active! Income starts today.`
         });
 
+
         res.json({ message: `Investment in ${investment.plan_name} approved successfully.` });
     } catch (err) {
         console.error("Error approving investment request:", err);
         res.status(500).json({ error: 'Failed to approve investment request.' });
     }
 });
+
 
 // **FIX 5: Endpoint to reject ANY pending investment**
 app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) => {
@@ -2050,11 +2263,13 @@ app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) =>
         
         if (fetchError || !investment) return res.status(404).json({ error: 'Investment request not found.' });
 
+
         // Update the status to 'rejected'
         const { error: updateError } = await supabase
             .from('investments')
             .update({ status: 'rejected' })
             .eq('id', id);
+
 
         if (updateError) throw updateError;
         
@@ -2071,12 +2286,14 @@ app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) =>
             message: `Your investment in ${investment.plan_name} was rejected and the amount of ${formatCurrency(investment.amount)} has been refunded to your account.`
         });
 
+
         res.json({ message: 'Investment request rejected successfully and user refunded.' });
     } catch (err) {
         console.error("Error rejecting investment request:", err);
         res.status(500).json({ error: 'Failed to reject investment request.' });
     }
 });
+
 
 // New endpoints for pre-sale product approvals
 app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
@@ -2087,6 +2304,7 @@ app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
             .eq('status', 'pre_sale_pending')
             .order('created_at', { ascending: true });
 
+
         if (error) throw error;
         res.json({ preSaleRequests: preSaleRequests || [] });
     } catch (err) {
@@ -2094,6 +2312,7 @@ app.get('/api/admin/pre-sale/pending', authenticateAdmin, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch pending pre-sale requests.' });
     }
 });
+
 
 app.post('/api/admin/pre-sale/approve', authenticateAdmin, async (req, res) => {
     const { id } = req.body;
@@ -2105,15 +2324,18 @@ app.post('/api/admin/pre-sale/approve', authenticateAdmin, async (req, res) => {
             .eq('id', id)
             .single();
 
+
         if (fetchError || !investment) {
             return res.status(404).json({ error: 'Pre-sale request not found.' });
         }
+
 
         // Update the status to 'active'
         const { error: updateError } = await supabase
             .from('investments')
             .update({ status: 'active' })
             .eq('id', id);
+
 
         if (updateError) throw updateError;
         
@@ -2124,12 +2346,14 @@ app.post('/api/admin/pre-sale/approve', authenticateAdmin, async (req, res) => {
             message: `Your pre-sale investment in ${investment.plan_name} has been approved and is now active!`
         });
 
+
         res.json({ message: 'Pre-sale request approved successfully.' });
     } catch (err) {
         console.error("Error approving pre-sale request:", err);
         res.status(500).json({ error: 'Failed to approve pre-sale request.' });
     }
 });
+
 
 app.post('/api/admin/pre-sale/reject', authenticateAdmin, async (req, res) => {
     const { id } = req.body;
@@ -2145,11 +2369,13 @@ app.post('/api/admin/pre-sale/reject', authenticateAdmin, async (req, res) => {
             return res.status(404).json({ error: 'Pre-sale request not found.' });
         }
 
+
         // Update the status to 'rejected'
         const { error: updateError } = await supabase
             .from('investments')
             .update({ status: 'rejected' })
             .eq('id', id);
+
 
         if (updateError) throw updateError;
         
@@ -2171,9 +2397,261 @@ app.post('/api/admin/pre-sale/reject', authenticateAdmin, async (req, res) => {
             message: `Your pre-sale investment in ${investment.plan_name} was rejected. The amount of ₹${investment.amount} has been refunded to your account.`
         });
 
+
         res.json({ message: 'Pre-sale request rejected successfully, and user has been refunded.' });
     } catch (err) {
         console.error("Error rejecting pre-sale request:", err);
         res.status(500).json({ error: 'Failed to reject pre-sale request.' });
     }
+});
+
+
+app.get('/api/admin/game-status', authenticateAdmin, async (req, res) => {
+    try {
+        const { data, error } = await supabase.from('game_state').select('*').single();
+        if (error) throw error;
+        res.json({ status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch game status.' });
+    }
+});
+
+
+app.post('/api/admin/game-status', authenticateAdmin, async (req, res) => {
+    const { is_on, mode, payout_priority } = req.body;
+    const updateData = {};
+    if (typeof is_on === 'boolean') updateData.is_on = is_on;
+    if (['auto', 'admin'].includes(mode)) updateData.mode = mode;
+    if (['users', 'admin'].includes(payout_priority)) updateData.payout_priority = payout_priority;
+    if (Object.keys(updateData).length === 0) return res.status(400).json({ error: 'No valid update data provided.' });
+    try {
+        const { data, error } = await supabase.from('game_state').update(updateData).eq('id', 1).select().single();
+        if (error) throw error;
+        res.json({ message: 'Game status updated.', status: data });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to update game status.' });
+    }
+});
+
+
+app.post('/api/admin/game-next-result', authenticateAdmin, async (req, res) => {
+    try {
+        await supabase.from('game_state').update({ next_result: req.body.result }).eq('id', 1);
+        res.json({ message: 'Next result set.' });
+    } catch(err) {
+        res.status(500).json({ error: 'Failed to set next result.' });
+    }
+});
+
+
+app.get('/api/admin/game-statistics', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
+        if (gsError) throw gsError;
+        const current_period = gameState.current_period;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const yyyymmdd = today.toISOString().slice(0, 10).replace(/-/g, "");
+        const today_start_period = Number(yyyymmdd + "0001");
+        const [
+            { data: totalStats, error: totalErr },
+            { data: todayStats, error: todayErr },
+            { data: currentStats, error: currentErr }
+        ] = await Promise.all([
+            supabase.from('bets').select('amount, payout'),
+            supabase.from('bets').select('amount, payout').gte('game_period', today_start_period),
+            supabase.from('bets').select('amount, payout').eq('game_period', current_period)
+        ]);
+        if (totalErr || todayErr || currentErr) throw totalErr || todayErr || currentErr;
+        const calculatePL = (records) => {
+            if (!records) return { totalIn: 0, totalOut: 0, pl: 0 };
+            const totalIn = records.reduce((sum, r) => sum + (r.amount || 0), 0);
+            const totalOut = records.reduce((sum, r) => sum + (r.payout || 0), 0);
+            return { totalIn, totalOut, pl: totalIn - totalOut };
+        };
+        res.json({
+            total: calculatePL(totalStats),
+            today: calculatePL(todayStats),
+            currentPeriod: calculatePL(currentStats)
+        });
+    } catch (error) {
+        console.error("Error fetching game statistics:", error);
+        res.status(500).json({ error: 'Failed to fetch game statistics.' });
+    }
+});
+
+
+app.get('/api/admin/current-bets', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
+        if (gsError) throw gsError;
+        const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
+        if (betsError) throw betsError;
+        const summary = { 'Red': 0, 'Green': 0, 'Violet': 0, '0': 0, '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0, '8': 0, '9': 0 };
+        bets.forEach(bet => {
+            if (summary.hasOwnProperty(bet.bet_on)) {
+                summary[bet.bet_on] += parseFloat(bet.amount);
+            }
+        });
+        res.json({ summary });
+    } catch (err) {
+        console.error("Error fetching current bets:", err);
+        res.status(500).json({ error: 'Failed to fetch current bets.' });
+    }
+});
+
+
+app.get('/api/admin/game-outcome-analysis', authenticateAdmin, async (req, res) => {
+    try {
+        const { data: gameState, error: gsError } = await supabase.from('game_state').select('current_period').single();
+        if (gsError) throw gsError;
+        const { data: bets, error: betsError } = await supabase.from('bets').select('bet_on, amount').eq('game_period', gameState.current_period);
+        if (betsError) throw betsError;
+        const totalBetIn = bets.reduce((sum, bet) => sum + parseFloat(bet.amount), 0);
+        const outcomes = Array.from({ length: 10 }, (_, i) => {
+            const winningColors = getNumberProperties(i);
+            let totalPayout = 0;
+            bets.forEach(bet => {
+                let multiplier = 0;
+                if (bet.bet_on == i.toString()) multiplier = 9.2;
+                else if (winningColors.includes(bet.bet_on)) multiplier = bet.bet_on === 'Violet' ? 4.5 : 1.98;
+                totalPayout += parseFloat(bet.amount) * multiplier;
+            });
+            return { number: i, pl: totalBetIn - totalPayout };
+        });
+        outcomes.sort((a, b) => b.pl - a.pl);
+        const analysis = {
+            mostProfitable: outcomes.slice(0, 3),
+            leastProfitable: outcomes.slice(-3).reverse()
+        };
+        res.json(analysis);
+    } catch (err) {
+        console.error("Error analyzing game outcomes:", err);
+        res.status(500).json({ error: 'Failed to analyze outcomes.' });
+    }
+});
+
+
+async function dailyInvestmentUpdate() {
+    console.log('Running daily investment update...');
+    try {
+        const { data, error } = await supabase.rpc('update_daily_investments');
+        if (error) throw error;
+        console.log(`Daily investment update complete. ${data} investments processed.`);
+    } catch (error) {
+        console.error('Error running daily investment update:', error);
+    }
+}
+
+
+dailyInvestmentUpdate();
+setInterval(dailyInvestmentUpdate, 24 * 60 * 60 * 1000);
+
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+
+const wss = new WebSocketServer({ noServer: true });
+
+
+server.on('upgrade', (request, socket, head) => {
+    if (request.url.startsWith('/')) {
+        wss.handleUpgrade(request, socket, head, ws => {
+            wss.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
+});
+
+
+wss.on('connection', ws => {
+    console.log('Client connected to WebSocket');
+    ws.on('message', async (message) => {
+        try {
+            const data = JSON.parse(message.toString());
+            if (data.game === 'color-prediction' && data.action === 'bet') {
+                const { amount, bet_on, token } = data.payload;
+                if (!token) {
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Authentication required.' }));
+                    return;
+                }
+                const user = jwt.verify(token, process.env.JWT_SECRET);
+                if (!user || !user.id) {
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Invalid authentication token.' }));
+                    return;
+                }
+
+
+                const { data: gameState } = await supabase.from('game_state').select('current_period, countdown_start_time').single();
+                const timeLeft = GAME_DURATION_SECONDS - Math.floor((new Date() - new Date(gameState.countdown_start_time)) / 1000);
+                
+                if (timeLeft > (GAME_DURATION_SECONDS - BETTING_WINDOW_SECONDS)) {
+                    const { error: betError } = await supabase.rpc('handle_bet_deduction', { p_user_id: user.id, p_amount: amount });
+                    if (betError) {
+                        ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Insufficient balance.' }));
+                        return;
+                    }
+                    
+                    await supabase.from('bets').insert([{ user_id: user.id, game_period: gameState.current_period, amount, bet_on }]);
+                    ws.send(JSON.stringify({ type: 'BET_SUCCESS', message: 'Bet placed!' }));
+                } else {
+                    ws.send(JSON.stringify({ type: 'BET_ERROR', message: 'Betting window has closed.' }));
+                }
+            }
+            if (data.game === 'pushpa') {
+                const { token } = data.payload;
+                if (!token) return;
+                const user = jwt.verify(token, process.env.JWT_SECRET);
+                if (!user && !user.id) return;
+
+
+                if (data.action === 'bet') {
+                    if (pushpaGameState.status !== 'waiting') {
+                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Betting window is closed.' }));
+                    }
+                    const { betAmount, roundId } = data.payload;
+                    const { error } = await supabase.rpc('place_pushpa_bet', {
+                        p_user_id: user.id,
+                        p_round_id: roundId,
+                        p_bet_amount: betAmount
+                    });
+
+
+                    if (error) {
+                        console.error("Pushpa bet error:", error);
+                        return ws.send(JSON.stringify({ type: 'PUSHPA_BET_ERROR', message: 'Insufficient balance.' }));
+                    }
+
+
+                    ws.send(JSON.stringify({ type: 'PUSHPA_BET_SUCCESS' }));
+                }
+
+
+                if (data.action === 'cashout') {
+                    if (pushpaGameState.status !== 'running') return;
+                    const { roundId } = data.payload;
+                    const { data: result, error } = await supabase.rpc('cashout_pushpa_bet', {
+                        p_user_id: user.id,
+                        p_round_id: roundId,
+                        p_cashout_multiplier: pushpaGameState.multiplier
+                    });
+                    if (error || !result || !result.success) {
+                        console.error("Pushpa cashout error:", error);
+                        return;
+                    }
+                    ws.send(JSON.stringify({ type: 'PUSHPA_CASHOUT_SUCCESS', payout: result.payout }));
+                }
+            }
+
+
+        } catch (e) {
+            console.error('Failed to process WebSocket message:', e);
+        }
+    });
+
+
+    ws.on('close', () => console.log('Client disconnected'));
 });
