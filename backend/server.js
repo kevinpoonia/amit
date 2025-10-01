@@ -1413,45 +1413,48 @@ app.get('/api/admin/pushpa-analysis', authenticateAdmin, async (req, res) => {
 });
 
 
+// ... (Lines 777-789: Existing API endpoints before Blackjack section) ...
+
 // --- NEW BLACKJACK ADMIN ENDPOINTS ---
 
+// FIX: Ensure the user's token has admin privileges for all settings access
 app.get('/api/admin/blackjack-settings', authenticateAdmin, (req, res) => {
-    res.json({ settings: blackjackAdminSettings });
+    res.json({ settings: blackjackAdminSettings });
 });
 
 app.post('/api/admin/blackjack-settings', authenticateAdmin, (req, res) => {
-    const { luckFactor, isManualShuffle } = req.body;
+    const { luckFactor, isManualShuffle } = req.body;
 
-    if (luckFactor !== undefined) {
-        const factor = parseInt(luckFactor);
-        if (!isNaN(factor) && factor >= -100 && factor <= 100) {
-            blackjackAdminSettings.luckFactor = factor;
-        } else {
-            return res.status(400).json({ error: 'Luck factor must be an integer between -100 and 100.' });
-        }
-    }
+    if (luckFactor !== undefined) {
+        const factor = parseInt(luckFactor);
+        if (!isNaN(factor) && factor >= -100 && factor <= 100) {
+            blackjackAdminSettings.luckFactor = factor;
+        } else {
+            return res.status(400).json({ error: 'Luck factor must be an integer between -100 and 100.' });
+        }
+    }
 
-    if (isManualShuffle !== undefined) {
-        if (typeof isManualShuffle === 'boolean') {
-            blackjackAdminSettings.isManualShuffle = isManualShuffle;
-        } else {
-            return res.status(400).json({ error: 'isManualShuffle must be a boolean.' });
-        }
-    }
+    if (isManualShuffle !== undefined) {
+        if (typeof isManualShuffle === 'boolean') {
+            blackjackAdminSettings.isManualShuffle = isManualShuffle;
+        } else {
+            return res.status(400).json({ error: 'isManualShuffle must be a boolean.' });
+        }
+    }
 
-    res.json({ message: 'Blackjack settings updated.', settings: blackjackAdminSettings });
+    res.json({ message: 'Blackjack settings updated.', settings: blackjackAdminSettings });
 });
 
 app.get('/api/admin/blackjack-analysis', authenticateAdmin, (req, res) => {
-    // For a simulated game, analysis just reports current settings.
-    res.json({
-        currentSettings: blackjackAdminSettings,
-        analysisNote: `Luck factor: ${blackjackAdminSettings.luckFactor}%. 0 is standard casino edge. This influences the client-side decision logic for demonstration.`,
-    });
+    res.json({
+        currentSettings: blackjackAdminSettings,
+        analysisNote: `Luck factor: ${blackjackAdminSettings.luckFactor}%. 0 is standard casino edge. This influences the client-side decision logic for demonstration.`,
+    });
 });
 
 // -------------------------------------
 
+// ... (Rest of server.js continues) ...
 
 app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
     try {
