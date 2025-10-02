@@ -1459,14 +1459,15 @@ app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) =>
         // 1. Mark as rejected
         await supabase.from('investments').update({ status: 'rejected' }).eq('id', id);
 
-        // 2. Refund the amount (credit back to withdrawable wallet)
+        // 2. Refund the amount (Credit back to the WITHDRAWABLE wallet)
         const { error: refundError } = await supabase.rpc('increment_user_withdrawable_wallet', { 
             p_user_id: investment.user_id, 
             p_amount: investment.amount 
         });
 
         if (refundError) {
-            console.error('CRITICAL REFUND ERROR:', refundError);
+            // CRITICAL: Log the detailed error to the console.
+            console.error('CRITICAL REFUND ERROR on investment rejection:', refundError);
             throw refundError;
         }
 
@@ -1474,12 +1475,11 @@ app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) =>
         await supabase.from('notifications').insert({
             user_id: investment.user_id,
             type: 'investment',
-            message: `Your investment in the "${investment.plan_name}" plan was rejected. The amount of ${formatCurrency(investment.amount)} has been fully refunded to your account.`
+            message: `Your investment in the "${investment.plan_name}" plan was rejected. The amount of ${formatCurrency(investment.amount)} has been fully refunded to your withdrawable wallet.`
         });
         
         res.json({ message: `Investment #${id} rejected and ${formatCurrency(investment.amount)} refunded.` });
     } catch (err) {
-        console.error('Failed to reject investment and refund:', err);
         res.status(500).json({ error: 'Failed to reject investment.' });
     }
 });
