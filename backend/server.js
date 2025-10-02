@@ -1496,13 +1496,27 @@ app.get('/api/admin/recharges/pending', authenticateAdmin, async (req, res) => {
 });
 
 
+// Server.js - Corrected /api/admin/withdrawals/pending
 app.get('/api/admin/withdrawals/pending', authenticateAdmin, async (req, res) => {
     try {
-        // FIX: Added join to fetch user info for admin panel display
-        const { data, error } = await supabase.from('withdrawals').select('*, users(name, status, total_deposits)').eq('status', 'pending').order('request_date', { ascending: true });
-        if (error) throw error;
+        // Changed 'total_deposits' to fetch only existing/assumed columns 'name' and 'status'
+        const { data, error } = await supabase
+            .from('withdrawals')
+            .select('*, users(name, status)') // Removed 'total_deposits' which might be the breaking column
+            .eq('status', 'pending')
+            .order('request_date', { ascending: true });
+            
+        if (error) {
+            // Log the detailed Supabase error for debugging
+            console.error("Supabase Error fetching pending withdrawals:", error); 
+            throw new Error('Database query failed.');
+        }
+
         res.json({ withdrawals: data });
-    } catch (err) { res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); }
+    } catch (err) { 
+        // This is the error message the frontend receives
+        res.status(500).json({ error: 'Failed to fetch pending withdrawals.' }); 
+    }
 });
 
 
