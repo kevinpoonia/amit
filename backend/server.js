@@ -1429,9 +1429,9 @@ app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) =
         if (fetchError || !investment) return res.status(404).json({ error: 'Investment not found.' });
         if (investment.status !== 'pending_admin_approval') return res.status(400).json({ error: 'Investment is not pending approval.' });
 
-        // 1. Activate the investment
-        await supabase.from('investments').update({ status: 'active', activated_at: new Date() }).eq('id', id);
-
+        
+// 1. Activate the investment
+await supabase.from('investments').update({ status: 'active', activated_at: new Date() }).eq('id', id);
         // 2. Notify the user
         await supabase.from('notifications').insert({
             user_id: investment.user_id,
@@ -1459,14 +1459,16 @@ app.post('/api/admin/investments/reject', authenticateAdmin, async (req, res) =>
         // 1. Mark as rejected
         await supabase.from('investments').update({ status: 'rejected' }).eq('id', id);
 
-        // 2. Refund the amount (was deducted at time of purchase)
-        // Assuming a function exists to safely credit the deducted amount back to user's total balance
-        const { error: refundError } = await supabase.rpc('increment_user_balance_or_withdrawable', { 
+        // 2. Refund the amount (credit back to withdrawable wallet)
+        const { error: refundError } = await supabase.rpc('increment_user_withdrawable_wallet', { 
             p_user_id: investment.user_id, 
             p_amount: investment.amount 
         });
 
-        if (refundError) throw refundError;
+        if (refundError) {
+            console.error('CRITICAL REFUND ERROR:', refundError);
+            throw refundError;
+        }
 
         // 3. Notify the user
         await supabase.from('notifications').insert({
