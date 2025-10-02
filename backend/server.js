@@ -1430,8 +1430,10 @@ app.post('/api/admin/investments/approve', authenticateAdmin, async (req, res) =
         if (investment.status !== 'pending_admin_approval') return res.status(400).json({ error: 'Investment is not pending approval.' });
 
         
-// 1. Activate the investment
-await supabase.from('investments').update({ status: 'active', activated_at: new Date() }).eq('id', id);
+// In server.js, inside app.post('/api/admin/investments/approve', ...)
+// Use toISOString() for a format PostgreSQL/Supabase prefers for timestamptz.
+await supabase.from('investments').update({ status: 'active', activated_at: new Date().toISOString() }).eq('id', id);
+        
         // 2. Notify the user
         await supabase.from('notifications').insert({
             user_id: investment.user_id,
