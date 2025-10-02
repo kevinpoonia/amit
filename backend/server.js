@@ -12,8 +12,8 @@ const http = require('http');
 let wss;
 let aviatorGameLoopInterval;
 let aviatorCountdownInterval;
-let pushpaGameLoopInterval; // FIX: Ensure global declaration
-let pushpaGameState = { // FIX: Ensure initial state is set globally
+let pushpaGameLoopInterval;
+let pushpaGameState = {
     status: 'waiting',
     roundId: `pushpa-${Date.now()}`,
     multiplier: 1.00,
@@ -48,6 +48,7 @@ const PORT = process.env.PORT || 10000;
 
 console.log(`Attempting to start server on port: ${PORT}`);
 
+// FIX 1: UPDATED allowedOrigins to include the new production URL
 const allowedOrigins = ['https://amit-sigma.vercel.app', 'http://localhost:3000', 'https://www.moneyplus.today', 'https://moneyplus.today'];
 
 const corsOptions = {
@@ -64,7 +65,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Handle preflight requests
+app.options('*', cors(corsOptions)); // FIX: Handle preflight requests explicitly
 
 app.use(express.json());
 
@@ -845,7 +846,7 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
     const { data: bets, error } = await supabase.from('lottery_bets').select('*').eq('round_id', roundId);
     if (error) throw error;
 
-    // Admin's manual choice overrides auto/profit logic
+    // FIX: Admin's manual choice overrides auto/profit logic
     if (adminLotteryChoice && adminLotteryChoice.roundId === roundId) {
         return { a: adminLotteryChoice.winning_num_a, b: adminLotteryChoice.winning_num_b };
     }
@@ -865,9 +866,9 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
                 const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
                 const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
 
-                if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) {
+                if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) { 
                     currentPayout += bet.bet_amount * 25;
-                } else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) {
+                } else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) { 
                     currentPayout += bet.bet_amount * 2.5;
                 }
             });
@@ -880,22 +881,22 @@ const calculateLotteryResult = async (roundId, profitPreference) => {
     }
     
     if (profitPreference === 'zero_profit' && bestOutcome.netResult < 0) {
-          let zeroProfitOutcome = { ...bestOutcome };
-          for (let a = 0; a <= 9; a++) {
-            for (let b = a; b <= 9; b++) {
-                let currentPayout = 0;
-                bets.forEach(bet => {
-                    const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
-                    const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
-                    if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) currentPayout += bet.bet_amount * 25;
-                    else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) currentPayout += bet.bet_amount * 2.5;
-                   });
-                const netResult = totalBetIn - currentPayout;
-                if (Math.abs(netResult) < Math.abs(zeroProfitOutcome.netResult)) {
-                    zeroProfitOutcome = { a, b, netResult };
-                }
-            }
-        }
+             let zeroProfitOutcome = { ...bestOutcome };
+             for (let a = 0; a <= 9; a++) {
+               for (let b = a; b <= 9; b++) {
+                   let currentPayout = 0;
+                   bets.forEach(bet => {
+                       const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
+                       const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
+                       if (isDoubleBet && ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a))) currentPayout += bet.bet_amount * 25;
+                       else if (isSingleBet && (bet.selected_num_a === a || bet.selected_num_a === b)) currentPayout += bet.bet_amount * 2.5;
+                       });
+                   const netResult = totalBetIn - currentPayout;
+                   if (Math.abs(netResult) < Math.abs(zeroProfitOutcome.netResult)) {
+                       zeroProfitOutcome = { a, b, netResult };
+                   }
+               }
+           }
         return { a: zeroProfitOutcome.a, b: zeroProfitOutcome.b };
     }
 
@@ -922,10 +923,10 @@ const processLotteryRound = async (roundId) => {
         let status = 'lost';
         const isDoubleBet = bet.selected_num_a !== null && bet.selected_num_b !== null;
         const isSingleBet = bet.selected_num_a !== null && bet.selected_num_b === null;
-        if (isDoubleBet && ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a))) { // FIX: Corrected result comparison
+        if (isDoubleBet && ((bet.selected_num_a === result.a && bet.selected_num_b === result.b) || (bet.selected_num_a === result.b && bet.selected_num_b === result.a))) { 
             payout = bet.bet_amount * 25;
             status = 'won';
-        } else if (isSingleBet && (bet.selected_num_a === result.a || bet.selected_num_a === result.b)) { // FIX: Corrected result comparison
+        } else if (isSingleBet && (bet.selected_num_a === result.a || bet.selected_num_a === result.b)) { 
             payout = bet.bet_amount * 2.5;
             status = 'won';
         }
@@ -1000,7 +1001,7 @@ async function processRoundResults(period) {
         const { data: gameState, error: gsError } = await supabase.from('game_state').select('*').single();
         if (gsError) throw gsError;
 
-        const { data: bets, error: betsError } = await supabase.from('bets').select('*, users(id)').eq('game_period', period); // FIX: Select user ID
+        const { data: bets, error: betsError } = await supabase.from('bets').select('*, users(id)').eq('game_period', period);
         if (betsError) throw betsError;
         
         let winningNumber;
@@ -1400,7 +1401,7 @@ app.get('/api/admin/blackjack-analysis', authenticateAdmin, (req, res) => {
 // -------------------------------------
 
 
-// --- **FIX IMPLEMENTED HERE (The missing 404 endpoint)** ---
+// --- **FIX IMPLEMENTED HERE (The missing /api/admin/investments/pending endpoint)** ---
 app.get('/api/admin/investments/pending', authenticateAdmin, async (req, res) => {
     try {
         // Fetches investments with status 'pending_admin_approval'
@@ -1924,7 +1925,7 @@ app.get('/api/admin/lottery-analysis', authenticateAdmin, async (req, res) => {
                     const isSingleBet = bet.selected_num_b === null;
                     if (isSingleBet) {
                         if (bet.selected_num_a === a || bet.selected_num_a === b) {
-                               currentPayout += Number(bet.bet_amount) * 2.5;
+                            currentPayout += Number(bet.bet_amount) * 2.5;
                         }
                     } else {
                         if ((bet.selected_num_a === a && bet.selected_num_b === b) || (bet.selected_num_a === b && bet.selected_num_b === a)) {
@@ -1992,13 +1993,25 @@ app.post('/api/admin/lottery-mode', authenticateAdmin, async (req, res) => {
 });
 
 
+// FIX 3: Implemented the missing lottery result setter endpoint
 app.post('/api/admin/lottery-set-result', authenticateAdmin, async (req, res) => {
-    const { roundId, winning_num_a, winning_num_b } = req.body;
+    const { result } = req.body; // Expects a string like "53"
     
-    // FIX: Store the manual choice in the global variable
-    adminLotteryChoice = { roundId, winning_num_a, winning_num_b }; 
+    const winning_num_a = parseInt(result.charAt(0), 10);
+    const winning_num_b = parseInt(result.charAt(1), 10);
+
+    if (isNaN(winning_num_a) || isNaN(winning_num_b)) {
+        return res.status(400).json({ error: 'Invalid lottery result format. Must be a two-digit number string.' });
+    }
+
+    // Store the manual choice in the global variable for the next round
+    adminLotteryChoice = { 
+        roundId: getLotteryRoundId(), // Use the *current* round ID for the one about to be processed
+        winning_num_a: winning_num_a, 
+        winning_num_b: winning_num_b 
+    }; 
     
-    res.json({ message: `Next result for round ${roundId} has been manually set to ${winning_num_a}, ${winning_num_b}. It will be finalized at the draw time.` });
+    res.json({ message: `Next Lottery result has been manually set to ${winning_num_a}, ${winning_num_b}. It will be used in the next draw.` });
 });
 
 
